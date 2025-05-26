@@ -15,10 +15,10 @@ const (
 
 // Message representa a estrutura básica de uma mensagem no protocolo.
 type Message struct {
-    Type    MessageType `json:"type"`
-    From    int         `json:"from"`
-    To      int         `json:"to"`
-    Payload interface{} `json:"payload"`
+    Type    MessageType     `json:"type"`
+    From    int             `json:"from"`
+    To      int             `json:"to"`
+    Payload json.RawMessage `json:"payload"`
 }
 
 // EncodeMessage serializa uma mensagem para JSON.

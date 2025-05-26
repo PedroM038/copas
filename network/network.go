@@ -8,6 +8,7 @@ import (
 
 // Network representa a configuração de rede de um jogador no anel.
 type Network struct {
+	PlayerID 	int	  // ID do jogador
     LocalAddr  *net.UDPAddr // Endereço local deste jogador
     NextAddr   *net.UDPAddr // Endereço do próximo jogador no anel
     Conn       *net.UDPConn // Conexão UDP
@@ -17,7 +18,7 @@ type Network struct {
 }
 
 // NewNetwork inicializa a rede para o jogador.
-func NewNetwork(localAddr, nextAddr string) (*Network, error) {
+func NewNetwork(playerID int, localAddr, nextAddr string) (*Network, error) {
     lAddr, err := net.ResolveUDPAddr("udp", localAddr)
     if err != nil {
         return nil, fmt.Errorf("erro ao resolver endereço local: %w", err)
@@ -31,6 +32,7 @@ func NewNetwork(localAddr, nextAddr string) (*Network, error) {
         return nil, fmt.Errorf("erro ao abrir conexão UDP: %w", err)
     }
     netw := &Network{
+        PlayerID:  playerID,  // ← Agora inicializa o PlayerID
         LocalAddr: lAddr,
         NextAddr:  nAddr,
         Conn:      conn,
