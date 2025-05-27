@@ -1,194 +1,235 @@
 package main
 
 import (
-    "copas/controller"
-    "copas/model"
-    "copas/network"
-    "encoding/json"
-    "fmt"
-    "os"
-    "strconv"
-    "time"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"time"
+
+	"copas/network"
 )
 
-// Payload da mensagem DISCOVERY
-type DiscoveryPayload struct {
-    IDs []int `json:"ids"`
+// Configurações da rede para 4 jogadores
+var networkConfig = map[int]map[string]string{
+	0: {"local": "localhost:8000", "next": "localhost:8001"},
+	1: {"local": "localhost:8001", "next": "localhost:8002"},
+	2: {"local": "localhost:8002", "next": "localhost:8003"},
+	3: {"local": "localhost:8003", "next": "localhost:8000"},
 }
 
 func main() {
-    if len(os.Args) != 4 {
-        fmt.Println("Uso: go run main.go <player_id> <porta_local> <porta_proximo>")
-        fmt.Println("Exemplo para 4 terminais:")
-        fmt.Println("Terminal 1: go run main.go 0 9000 9001")
-        fmt.Println("Terminal 2: go run main.go 1 9001 9002")
-        fmt.Println("Terminal 3: go run main.go 2 9002 9003")
-        fmt.Println("Terminal 4: go run main.go 3 9003 9000")
-        return
-    }
+	if len(os.Args) != 2 {
+		fmt.Println("Uso: go run main.go <player_id>")
+		fmt.Println("player_id deve ser 0, 1, 2 ou 3")
+		os.Exit(1)
+	}
 
-    playerID, err := strconv.Atoi(os.Args[1])
-    if err != nil || playerID < 0 || playerID > 3 {
-        fmt.Println("player_id deve ser 0, 1, 2 ou 3")
-        return
-    }
-    localPort := os.Args[2]
-    nextPort := os.Args[3]
+	playerID, err := strconv.Atoi(os.Args[1])
+	if err != nil || playerID < 0 || playerID > 3 {
+		fmt.Println("player_id deve ser um número entre 0 e 3")
+		os.Exit(1)
+	}
 
-    localAddr := "127.0.0.1:" + localPort
-    nextAddr := "127.0.0.1:" + nextPort
+	// Inicializar rede
+	config := networkConfig[playerID]
+	net, err := network.NewNetwork(playerID, config["local"], config["next"])
+	if err != nil {
+		log.Fatalf("Erro ao inicializar rede: %v", err)
+	}
+	defer net.Close()
 
-    // Criar jogadores
-    jogadores := []*model.Player{
-        model.NewPlayer(0, "Alice"),
-        model.NewPlayer(1, "Bob"),
-        model.NewPlayer(2, "Carol"),
-        model.NewPlayer(3, "Dave"),
-    }
+	fmt.Printf("=== Jogador %d iniciado ===\n", playerID)
+	fmt.Printf("Local: %s, Próximo: %s\n", config["local"], config["next"])
 
-    game := model.NewGame(jogadores)
-    player := jogadores[playerID]
+	if playerID == 0 {
+		fmt.Println("🎯 Este jogador possui o token inicial!")
+		fmt.Println("⏳ Aguardando outros jogadores se conectarem...")
+	} else {
+		fmt.Println("⏳ Aguardando rede estabilizar...")
+	}
 
-    // Inicializar rede
-    netw, err := network.NewNetwork(playerID, localAddr, nextAddr)
-    if err != nil {
-        fmt.Println("Erro ao inicializar rede:", err)
-        return
-    }
-    defer netw.Close()
+	// Aguardar um pouco para todos os jogadores iniciarem
+	time.Sleep(2 * time.Second)
 
-    fmt.Printf("Jogador %d (%s) iniciado na porta %s\n", playerID, player.Nome, localPort)
-    fmt.Println("Aguardando outros jogadores se conectarem ao anel...")
+	// Escutar mensagens primeiro
+	go listenForMessages(net, playerID)
 
-    // Aguarda um tempo para todos os jogadores iniciarem suas redes
-    time.Sleep(5 * time.Second)
+	// Aguardar mais um pouco antes de iniciar simulação
+	time.Sleep(2 * time.Second)
 
-    // Processo de descoberta do anel
-    if playerID == 0 {
-        fmt.Println("Iniciando descoberta do anel...")
+	// Iniciar simulação
+	go simulatePlayer(net, playerID)
 
-        payload := DiscoveryPayload{IDs: []int{playerID}}
-        payloadBytes, _ := json.Marshal(payload)
-        discoveryMsg := network.Message{
-            Type:    network.MessageType("DISCOVERY"),
-            From:    playerID,
-            To:      -1, // broadcast
-            Payload: json.RawMessage(payloadBytes),
-        }
-        netw.Send(discoveryMsg)
+	// Manter o programa rodando
+	select {}
+}
 
-        // Aguarda descoberta completa
-        timeout := time.After(15 * time.Second)
-        for {
-            select {
-            case msg := <-netw.Receive():
-                if string(msg.Type) == "DISCOVERY" {
-                    var p DiscoveryPayload
-                    if err := json.Unmarshal(msg.Payload, &p); err != nil {
-                        continue
-                    }
+func simulatePlayer(net *network.Network, playerID int) {
+	fmt.Printf("🚀 Iniciando simulação para jogador %d\n", playerID)
 
-                    // Se a mensagem voltou para mim e temos 4 jogadores
-                    if msg.From == playerID && len(p.IDs) >= 4 {
-                        fmt.Printf("Anel completo! Jogadores conectados: %v\n", p.IDs)
-                        fmt.Println("Distribuindo cartas e iniciando o jogo...")
+	// Aguardar estabilização da rede
+	time.Sleep(3 * time.Second)
 
-                        // Distribuir cartas
-                        game.DistribuirCartas()
+	// Enviar mensagem de descoberta (broadcast)
+	discoveryMsg, _ := network.NewDiscoveryMessage(
+		playerID, -1, playerID,
+		fmt.Sprintf("Jogador_%d", playerID),
+		true,
+	)
+	net.Send(discoveryMsg)
+	fmt.Printf("📡 Enviou mensagem de descoberta\n")
 
-                        // Enviar mensagem de início
-                        startMsg := network.Message{
-                            Type:    network.MessageType("START"),
-                            From:    playerID,
-                            To:      -1,
-                            Payload: nil,
-                        }
-                        netw.Send(startMsg)
+	// Loop principal do jogador
+	actionCount := 0
+	for {
+		// Se tem o token, fazer uma ação
+		if net.HasTokenNow() {
+			fmt.Printf("🎯 Tenho o token! Executando ação %d\n", actionCount+1)
 
-                        goto gameStart
-                    }
+			switch actionCount {
+			case 0:
+				// Primeira ação: enviar mensagem de estado
+				sendStateMessage(net, playerID)
+			case 1:
+				// Segunda ação: enviar mensagem de troca de cartas
+				sendPassMessage(net, playerID)
+			case 2:
+				// Terceira ação: enviar mensagem de jogada
+				sendPlayMessage(net, playerID)
+			default:
+				// Ações subsequentes: apenas passar o token
+				fmt.Printf("⏭️ Passando token para o próximo jogador\n")
+			}
 
-                    // Repassar mensagem para continuar circulação
-                    netw.Send(msg)
-                }
-            case <-timeout:
-                fmt.Println("Timeout: nem todos os jogadores estão conectados")
-                fmt.Println("Certifique-se de que todos os 4 terminais estão rodando")
-                return
-            }
-        }
+			actionCount++
 
-    } else {
-        // Jogadores 1, 2, 3 aguardam descoberta
-        fmt.Println("Aguardando descoberta do anel...")
+			// Aguardar um pouco antes de passar o token
+			time.Sleep(2 * time.Second) // Aumentar delay
 
-        for {
-            select {
-            case msg := <-netw.Receive():
-                switch string(msg.Type) {
-                case "DISCOVERY":
-                    var p DiscoveryPayload
-                    if err := json.Unmarshal(msg.Payload, &p); err != nil {
-                        netw.Send(msg) // Repassa mesmo com erro
-                        continue
-                    }
+			// Passar o token
+			err := net.PassToken()
+			if err != nil {
+				fmt.Printf("❌ Erro ao passar token: %v\n", err)
+			} else {
+				fmt.Printf("✅ Token passado para jogador %d\n", (playerID+1)%4)
+			}
+		}
 
-                    // Adiciona meu ID se ainda não estiver na lista
-                    alreadyIncluded := false
-                    for _, id := range p.IDs {
-                        if id == playerID {
-                            alreadyIncluded = true
-                            break
-                        }
-                    }
+		// Aguardar antes da próxima verificação
+		time.Sleep(500 * time.Millisecond)
+	}
+}
 
-                    if !alreadyIncluded {
-                        p.IDs = append(p.IDs, playerID)
-                        fmt.Printf("Adicionado ao anel. Jogadores até agora: %v\n", p.IDs)
-                    }
+// ...existing code... (resto das funções permanecem iguais)
 
-                    // Atualiza payload e repassa
-                    newPayloadBytes, _ := json.Marshal(p)
-                    newMsg := network.Message{
-                        Type:    msg.Type,
-                        From:    msg.From,
-                        To:      -1,
-                        Payload: json.RawMessage(newPayloadBytes),
-                    }
-                    netw.Send(newMsg)
+func sendStateMessage(net *network.Network, playerID int) {
+	// Simular estado do jogo
+	gameState := map[string]interface{}{
+		"round":         1,
+		"current_turn":  playerID,
+		"cards_played":  []string{},
+		"scores":        []int{0, 0, 0, 0},
+		"hearts_broken": false,
+	}
 
-                case "START":
-                    fmt.Println("Anel completo! O jogo vai começar.")
+	gameStateBytes, _ := json.Marshal(gameState)
+	msg, _ := network.NewStateMessage(
+		playerID, -1, // broadcast
+		json.RawMessage(gameStateBytes),
+	)
 
-                    // Distribuir cartas localmente
-                    game.DistribuirCartas()
+	net.Send(msg)
+	fmt.Printf("🎮 Enviou estado do jogo\n")
+}
 
-                    // Repassar mensagem se não foi originada por mim
-                    if msg.From != playerID {
-                        netw.Send(msg)
-                    }
-                    goto gameStart
+func sendPassMessage(net *network.Network, playerID int) {
+	// Simular troca de cartas
+	cards := []map[string]interface{}{
+		{"suit": "hearts", "rank": "A"},
+		{"suit": "spades", "rank": "Q"},
+		{"suit": "hearts", "rank": "K"},
+	}
 
-                default:
-                    // Repassar outras mensagens
-                    netw.Send(msg)
-                }
-            case <-time.After(20 * time.Second):
-                fmt.Println("Timeout: problema na descoberta do anel")
-                return
-            }
-        }
-    }
+	var cardMessages []json.RawMessage
+	for _, card := range cards {
+		cardBytes, _ := json.Marshal(card)
+		cardMessages = append(cardMessages, json.RawMessage(cardBytes))
+	}
 
-gameStart:
-    fmt.Printf("\n🎮 JOGO DE COPAS INICIADO! 🎮\n")
-    fmt.Printf("Jogador: %s (ID: %d)\n", player.Nome, player.ID)
-    fmt.Printf("Cartas na mão: %d\n\n", len(player.Mao))
+	targetPlayer := (playerID + 1) % 4
+	msg, _ := network.NewPassMessage(
+		playerID, targetPlayer, playerID, targetPlayer, cardMessages,
+	)
 
-    // Pequena pausa para sincronização
-    time.Sleep(2 * time.Second)
+	net.Send(msg)
+	fmt.Printf("🃏 Enviou troca de cartas para jogador %d\n", targetPlayer)
+}
 
-    // Iniciar controlador do jogo (ajustado para o novo construtor)
-    ctrl := controller.NewGameController(game, netw, player)
-    ctrl.Start()
+func sendPlayMessage(net *network.Network, playerID int) {
+	// Simular jogada de carta
+	card := map[string]interface{}{
+		"suit": "clubs",
+		"rank": "2",
+	}
+
+	cardBytes, _ := json.Marshal(card)
+	msg, _ := network.NewPlayMessage(
+		playerID, -1, // broadcast
+		playerID, json.RawMessage(cardBytes),
+	)
+
+	net.Send(msg)
+	fmt.Printf("🎯 Enviou jogada de carta\n")
+}
+
+func listenForMessages(net *network.Network, playerID int) {
+	for {
+		select {
+		case msg := <-net.Receive():
+			handleReceivedMessage(msg, playerID)
+		case token := <-net.TokenCh:
+			fmt.Printf("🎯 Recebi o token! (HolderID: %d)\n", token.HolderID)
+		}
+	}
+}
+
+func handleReceivedMessage(msg network.Message, playerID int) {
+	// Ignorar mensagens próprias que deram a volta
+	if msg.From == playerID {
+		return
+	}
+
+	switch msg.Type {
+	case network.MessageDiscovery:
+		var payload network.DiscoveryMessagePayload
+		json.Unmarshal(msg.Payload, &payload)
+		fmt.Printf("📡 Descoberta: %s (ID:%d, Ready:%v) de jogador %d\n",
+			payload.PlayerName, payload.PlayerID, payload.IsReady, msg.From)
+
+	case network.MessageState:
+		var payload network.StateMessagePayload
+		json.Unmarshal(msg.Payload, &payload)
+		fmt.Printf("🎮 Estado do jogo recebido de jogador %d\n", msg.From)
+
+	case network.MessagePass:
+		var payload network.PassMessagePayload
+		json.Unmarshal(msg.Payload, &payload)
+		if msg.To == playerID {
+			fmt.Printf("🃏 Recebi %d cartas do jogador %d\n",
+				len(payload.Cards), msg.From)
+		} else {
+			fmt.Printf("🃏 Troca de cartas: jogador %d -> jogador %d (%d cartas)\n",
+				msg.From, msg.To, len(payload.Cards))
+		}
+
+	case network.MessagePlay:
+		var payload network.PlayMessagePayload
+		json.Unmarshal(msg.Payload, &payload)
+		fmt.Printf("🎯 Jogada do jogador %d\n", msg.From)
+
+	case network.MessageToken:
+		fmt.Printf("⚡ Token em trânsito (não é para mim)\n")
+	}
 }
