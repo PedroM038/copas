@@ -1,235 +1,272 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
+	"sync"
+	"syscall"
 	"time"
 
 	"copas/network"
 )
 
-// Configurações da rede para 4 jogadores
-var networkConfig = map[int]map[string]string{
-	0: {"local": "localhost:8000", "next": "localhost:8001"},
-	1: {"local": "localhost:8001", "next": "localhost:8002"},
-	2: {"local": "localhost:8002", "next": "localhost:8003"},
-	3: {"local": "localhost:8003", "next": "localhost:8000"},
+// Configuração da rede - IPs das máquinas
+var nodeAddresses = map[int]string{
+	0: "192.168.1.10", // Substitua pelos IPs reais das máquinas
+	1: "192.168.1.11",
+	2: "192.168.1.12",
+	3: "192.168.1.13",
+}
+
+// Portas base para cada nó
+var basePorts = map[int]int{
+	0: 8000,
+	1: 8001,
+	2: 8002,
+	3: 8003,
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Println("Uso: go run main.go <player_id>")
-		fmt.Println("player_id deve ser 0, 1, 2 ou 3")
+	if len(os.Args) < 2 {
+		fmt.Println("Uso: go run main.go <node_id>")
+		fmt.Println("Onde node_id é 0, 1, 2 ou 3")
 		os.Exit(1)
 	}
 
-	playerID, err := strconv.Atoi(os.Args[1])
-	if err != nil || playerID < 0 || playerID > 3 {
-		fmt.Println("player_id deve ser um número entre 0 e 3")
+	nodeID, err := strconv.Atoi(os.Args[1])
+	if err != nil || nodeID < 0 || nodeID > 3 {
+		fmt.Printf("ERRO: ID do nó deve ser 0, 1, 2 ou 3. Recebido: %s\n", os.Args[1])
 		os.Exit(1)
 	}
 
-	// Inicializar rede
-	config := networkConfig[playerID]
-	net, err := network.NewNetwork(playerID, config["local"], config["next"])
-	if err != nil {
-		log.Fatalf("Erro ao inicializar rede: %v", err)
+	// Configurar logger específico para o nó
+	logger := log.New(os.Stdout, fmt.Sprintf("[Nó %d] ", nodeID), log.LstdFlags|log.Lmicroseconds)
+
+	logger.Printf("=== INICIANDO TESTE DE REDE - NÓ %d ===", nodeID)
+	logger.Printf("Endereços configurados:")
+	for id, addr := range nodeAddresses {
+		logger.Printf("  Nó %d: %s:%d", id, addr, basePorts[id])
 	}
-	defer net.Close()
 
-	fmt.Printf("=== Jogador %d iniciado ===\n", playerID)
-	fmt.Printf("Local: %s, Próximo: %s\n", config["local"], config["next"])
+	// Criar nó com configuração de rede
+	port := basePorts[nodeID]
+	nextNodeID := (nodeID + 1) % 4
+	nextPort := basePorts[nextNodeID]
 
-	if playerID == 0 {
-		fmt.Println("🎯 Este jogador possui o token inicial!")
-		fmt.Println("⏳ Aguardando outros jogadores se conectarem...")
+	node := network.NewNode(nodeID, port, nextPort, logger)
+
+	// Configurar IPs dos nós
+	node.SetNodeIPs(nodeAddresses)
+
+	// Inicializar conexão
+	logger.Printf("Inicializando conexão na porta %d...", port)
+	if err := node.InitConnection(); err != nil {
+		logger.Fatalf("ERRO: Falha ao inicializar conexão: %v", err)
+	}
+
+	// Canal para coordenação
+	var wg sync.WaitGroup
+
+	// Iniciar gorrotinas do nó
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		node.Listen()
+	}()
+
+	go func() {
+		defer wg.Done()
+		node.ProcessMessages()
+	}()
+
+	// Aguardar um pouco para todas as conexões se estabilizarem
+	time.Sleep(2 * time.Second)
+
+	// Se for o nó 0 (host), aguardar todos os nós e iniciar testes
+	if nodeID == 0 {
+		logger.Printf("=== NÓ HOST INICIANDO COORDENAÇÃO ===")
+		go hostCoordination(node, logger)
 	} else {
-		fmt.Println("⏳ Aguardando rede estabilizar...")
+		logger.Printf("=== NÓ CLIENTE AGUARDANDO COORDENAÇÃO DO HOST ===")
+		go clientBehavior(node, logger)
 	}
 
-	// Aguardar um pouco para todos os jogadores iniciarem
-	time.Sleep(2 * time.Second)
+	// Configurar captura de sinais para encerramento gracioso
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Escutar mensagens primeiro
-	go listenForMessages(net, playerID)
+	// Aguardar sinal de encerramento
+	<-sigChan
+	logger.Printf("=== ENCERRANDO NÓ %d ===", nodeID)
 
-	// Aguardar mais um pouco antes de iniciar simulação
-	time.Sleep(2 * time.Second)
+	// Fechar nó
+	if err := node.Close(); err != nil {
+		logger.Printf("ERRO ao fechar nó: %v", err)
+	}
 
-	// Iniciar simulação
-	go simulatePlayer(net, playerID)
-
-	// Manter o programa rodando
-	select {}
+	logger.Printf("=== NÓ %d ENCERRADO ===", nodeID)
 }
 
-func simulatePlayer(net *network.Network, playerID int) {
-	fmt.Printf("🚀 Iniciando simulação para jogador %d\n", playerID)
+// Coordenação do host (nó 0)
+func hostCoordination(node *network.Node, logger *log.Logger) {
+	logger.Printf("HOST: Aguardando 10 segundos para todos os nós se conectarem...")
+	time.Sleep(10 * time.Second)
 
-	// Aguardar estabilização da rede
-	time.Sleep(3 * time.Second)
+	logger.Printf("HOST: Iniciando testes de rede...")
 
-	// Enviar mensagem de descoberta (broadcast)
-	discoveryMsg, _ := network.NewDiscoveryMessage(
-		playerID, -1, playerID,
-		fmt.Sprintf("Jogador_%d", playerID),
-		true,
-	)
-	net.Send(discoveryMsg)
-	fmt.Printf("📡 Enviou mensagem de descoberta\n")
+	// Teste 1: Verificar se o bastão está circulando
+	logger.Printf("=== TESTE 1: CIRCULAÇÃO DO BASTÃO ===")
+	testTokenCirculation(node, logger)
 
-	// Loop principal do jogador
-	actionCount := 0
-	for {
-		// Se tem o token, fazer uma ação
-		if net.HasTokenNow() {
-			fmt.Printf("🎯 Tenho o token! Executando ação %d\n", actionCount+1)
+	time.Sleep(5 * time.Second)
 
-			switch actionCount {
-			case 0:
-				// Primeira ação: enviar mensagem de estado
-				sendStateMessage(net, playerID)
-			case 1:
-				// Segunda ação: enviar mensagem de troca de cartas
-				sendPassMessage(net, playerID)
-			case 2:
-				// Terceira ação: enviar mensagem de jogada
-				sendPlayMessage(net, playerID)
-			default:
-				// Ações subsequentes: apenas passar o token
-				fmt.Printf("⏭️ Passando token para o próximo jogador\n")
-			}
+	// Teste 2: Envio de mensagens dirigidas
+	logger.Printf("=== TESTE 2: MENSAGENS DIRIGIDAS ===")
+	testDirectMessages(node, logger)
 
-			actionCount++
+	time.Sleep(5 * time.Second)
 
-			// Aguardar um pouco antes de passar o token
-			time.Sleep(2 * time.Second) // Aumentar delay
+	// Teste 3: Mensagens de broadcast
+	logger.Printf("=== TESTE 3: MENSAGENS DE BROADCAST ===")
+	testBroadcastMessages(node, logger)
 
-			// Passar o token
-			err := net.PassToken()
-			if err != nil {
-				fmt.Printf("❌ Erro ao passar token: %v\n", err)
-			} else {
-				fmt.Printf("✅ Token passado para jogador %d\n", (playerID+1)%4)
-			}
-		}
+	time.Sleep(5 * time.Second)
 
-		// Aguardar antes da próxima verificação
-		time.Sleep(500 * time.Millisecond)
+	// Teste 4: Estatísticas da rede
+	logger.Printf("=== TESTE 4: ESTATÍSTICAS DA REDE ===")
+	testNetworkStats(node, logger)
+
+	time.Sleep(5 * time.Second)
+
+	// Teste 5: Simulação contínua
+	logger.Printf("=== TESTE 5: SIMULAÇÃO CONTÍNUA ===")
+	logger.Printf("HOST: Iniciando simulação contínua por 30 segundos...")
+
+	go node.Simulate()
+	time.Sleep(30 * time.Second)
+
+	logger.Printf("=== TODOS OS TESTES CONCLUÍDOS ===")
+
+	// Enviar sinal de encerramento para todos os nós
+	if err := node.SendBroadcast("ENCERRAR_TESTES"); err != nil {
+		logger.Printf("ERRO ao enviar sinal de encerramento: %v", err)
 	}
 }
 
-// ...existing code... (resto das funções permanecem iguais)
+// Comportamento dos clientes (nós 1, 2, 3)
+func clientBehavior(node *network.Node, logger *log.Logger) {
+	// Clientes respondem a comandos do host e participam dos testes
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-func sendStateMessage(net *network.Network, playerID int) {
-	// Simular estado do jogo
-	gameState := map[string]interface{}{
-		"round":         1,
-		"current_turn":  playerID,
-		"cards_played":  []string{},
-		"scores":        []int{0, 0, 0, 0},
-		"hearts_broken": false,
-	}
-
-	gameStateBytes, _ := json.Marshal(gameState)
-	msg, _ := network.NewStateMessage(
-		playerID, -1, // broadcast
-		json.RawMessage(gameStateBytes),
-	)
-
-	net.Send(msg)
-	fmt.Printf("🎮 Enviou estado do jogo\n")
-}
-
-func sendPassMessage(net *network.Network, playerID int) {
-	// Simular troca de cartas
-	cards := []map[string]interface{}{
-		{"suit": "hearts", "rank": "A"},
-		{"suit": "spades", "rank": "Q"},
-		{"suit": "hearts", "rank": "K"},
-	}
-
-	var cardMessages []json.RawMessage
-	for _, card := range cards {
-		cardBytes, _ := json.Marshal(card)
-		cardMessages = append(cardMessages, json.RawMessage(cardBytes))
-	}
-
-	targetPlayer := (playerID + 1) % 4
-	msg, _ := network.NewPassMessage(
-		playerID, targetPlayer, playerID, targetPlayer, cardMessages,
-	)
-
-	net.Send(msg)
-	fmt.Printf("🃏 Enviou troca de cartas para jogador %d\n", targetPlayer)
-}
-
-func sendPlayMessage(net *network.Network, playerID int) {
-	// Simular jogada de carta
-	card := map[string]interface{}{
-		"suit": "clubs",
-		"rank": "2",
-	}
-
-	cardBytes, _ := json.Marshal(card)
-	msg, _ := network.NewPlayMessage(
-		playerID, -1, // broadcast
-		playerID, json.RawMessage(cardBytes),
-	)
-
-	net.Send(msg)
-	fmt.Printf("🎯 Enviou jogada de carta\n")
-}
-
-func listenForMessages(net *network.Network, playerID int) {
 	for {
 		select {
-		case msg := <-net.Receive():
-			handleReceivedMessage(msg, playerID)
-		case token := <-net.TokenCh:
-			fmt.Printf("🎯 Recebi o token! (HolderID: %d)\n", token.HolderID)
+		case <-ticker.C:
+			// Enviar heartbeat periodicamente
+			state, hasToken := node.GetState()
+			logger.Printf("CLIENTE: Estado=%s, Bastão=%v", state, hasToken)
+
+			// Se tiver o bastão, enviar uma mensagem de teste ocasionalmente
+			if hasToken {
+				target := (node.ID + 2) % 4 // Enviar para nó dois à frente
+				if err := node.SendMessage(target,
+					fmt.Sprintf("Teste do nó %d", node.ID),
+					network.MSG_DATA); err != nil {
+					logger.Printf("ERRO ao enviar mensagem de teste: %v", err)
+				}
+			}
 		}
 	}
 }
 
-func handleReceivedMessage(msg network.Message, playerID int) {
-	// Ignorar mensagens próprias que deram a volta
-	if msg.From == playerID {
-		return
-	}
+// Testes específicos
 
-	switch msg.Type {
-	case network.MessageDiscovery:
-		var payload network.DiscoveryMessagePayload
-		json.Unmarshal(msg.Payload, &payload)
-		fmt.Printf("📡 Descoberta: %s (ID:%d, Ready:%v) de jogador %d\n",
-			payload.PlayerName, payload.PlayerID, payload.IsReady, msg.From)
+func testTokenCirculation(node *network.Node, logger *log.Logger) {
+	logger.Printf("Testando circulação do bastão...")
 
-	case network.MessageState:
-		var payload network.StateMessagePayload
-		json.Unmarshal(msg.Payload, &payload)
-		fmt.Printf("🎮 Estado do jogo recebido de jogador %d\n", msg.From)
-
-	case network.MessagePass:
-		var payload network.PassMessagePayload
-		json.Unmarshal(msg.Payload, &payload)
-		if msg.To == playerID {
-			fmt.Printf("🃏 Recebi %d cartas do jogador %d\n",
-				len(payload.Cards), msg.From)
-		} else {
-			fmt.Printf("🃏 Troca de cartas: jogador %d -> jogador %d (%d cartas)\n",
-				msg.From, msg.To, len(payload.Cards))
+	_, hasToken := node.GetState()
+	if hasToken {
+		logger.Printf("HOST tem o bastão, passando para nó 1...")
+		if err := node.PassToken(1); err != nil {
+			logger.Printf("ERRO ao passar bastão: %v", err)
 		}
-
-	case network.MessagePlay:
-		var payload network.PlayMessagePayload
-		json.Unmarshal(msg.Payload, &payload)
-		fmt.Printf("🎯 Jogada do jogador %d\n", msg.From)
-
-	case network.MessageToken:
-		fmt.Printf("⚡ Token em trânsito (não é para mim)\n")
 	}
+
+	// Aguardar o bastão voltar
+	timeout := time.After(15 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			logger.Printf("TIMEOUT: Bastão não retornou em 15 segundos")
+			return
+		case <-ticker.C:
+			_, hasToken := node.GetState()
+			if hasToken {
+				logger.Printf("SUCESSO: Bastão retornou ao host!")
+				return
+			}
+		}
+	}
+}
+
+func testDirectMessages(node *network.Node, logger *log.Logger) {
+	logger.Printf("Testando mensagens dirigidas...")
+
+	// Aguardar ter o bastão
+	for {
+		_, hasToken := node.GetState()
+		if hasToken {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Enviar mensagem para cada nó
+	for targetID := 1; targetID < 4; targetID++ {
+		message := fmt.Sprintf("Mensagem de teste do host para nó %d", targetID)
+		if err := node.SendMessage(targetID, message, network.MSG_DATA); err != nil {
+			logger.Printf("ERRO ao enviar mensagem para nó %d: %v", targetID, err)
+		} else {
+			logger.Printf("Mensagem enviada para nó %d", targetID)
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func testBroadcastMessages(node *network.Node, logger *log.Logger) {
+	logger.Printf("Testando mensagens de broadcast...")
+
+	// Aguardar ter o bastão
+	for {
+		_, hasToken := node.GetState()
+		if hasToken {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	message := "BROADCAST: Mensagem para todos os nós!"
+	if err := node.SendBroadcast(message); err != nil {
+		logger.Printf("ERRO ao enviar broadcast: %v", err)
+	} else {
+		logger.Printf("Broadcast enviado com sucesso")
+	}
+}
+
+func testNetworkStats(node *network.Node, logger *log.Logger) {
+	logger.Printf("Coletando estatísticas da rede...")
+
+	stats := node.GetStats()
+	logger.Printf("ESTATÍSTICAS DO NÓ:")
+	logger.Printf("  Mensagens Enviadas: %d", stats.MessagesSent)
+	logger.Printf("  Mensagens Recebidas: %d", stats.MessagesReceived)
+	logger.Printf("  Passagens de Bastão: %d", stats.TokenPasses)
+	logger.Printf("  Erros: %d", stats.Errors)
+	logger.Printf("  Última Atividade: %s", stats.LastActivity.Format("15:04:05"))
 }
