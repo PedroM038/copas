@@ -1,17 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"copas/controller"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strconv"
-	"sync"
+	"strings"
 	"syscall"
 	"time"
-
-	"copas/controller"
-	"copas/network"
 )
 
 // Configuração da rede - IPs das máquinas
@@ -32,10 +30,17 @@ var basePorts = map[int]int{
 
 func main() {
 	// Verifica argumentos
-	if len(os.Args) < 2 {
-		fmt.Println("Uso: go run main.go <node_id>")
+	if len(os.Args) < 3 {
+		fmt.Println("Uso: go run main.go <node_id> <nome_jogador>")
 		fmt.Println("  node_id: 0, 1, 2 ou 3")
+		fmt.Println("  nome_jogador: Nome do jogador (sem espaços)")
 		fmt.Println("  Nó 0 é o host que inicia o jogo")
+		fmt.Println("")
+		fmt.Println("Exemplos:")
+		fmt.Println("  go run main.go 0 Pedro")
+		fmt.Println("  go run main.go 1 Maria")
+		fmt.Println("  go run main.go 2 João")
+		fmt.Println("  go run main.go 3 Ana")
 		os.Exit(1)
 	}
 
@@ -46,138 +51,210 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Configura logger
-	logger := log.New(os.Stdout, fmt.Sprintf("[Nó %d] ", nodeID), log.LstdFlags|log.Lmicroseconds)
-
-	// Banner de início
-	printBanner(nodeID, logger)
-
-	// Configuração da rede
-	port := basePorts[nodeID]
-	nextID := (nodeID + 1) % 4
-	nextPort := basePorts[nextID]
-
-	// Cria o nó de rede
-	node := network.NewNode(nodeID, port, nextPort, logger)
-	node.SetNodeIPs(nodeAddresses)
-
-	// Inicializa conexão
-	if err := node.InitConnection(); err != nil {
-		logger.Fatalf("❌ Erro ao inicializar conexão: %v", err)
+	// Obtém o nome do jogador do argumento
+	playerName := strings.TrimSpace(os.Args[2])
+	if playerName == "" {
+		fmt.Println("❌ Nome do jogador não pode estar vazio")
+		os.Exit(1)
 	}
 
-	// Configura controlador do jogo
+	// Validação simples do nome (apenas letras, números e alguns caracteres especiais)
+	if len(playerName) > 20 {
+		fmt.Println("❌ Nome do jogador muito longo (máximo 20 caracteres)")
+		os.Exit(1)
+	}
+
+	// Verifica se é o host (nó 0)
 	isHost := nodeID == 0
-	gameController := controller.NewGameController(node, logger, isHost)
 
-	// Inicia goroutines da rede
-	var wg sync.WaitGroup
-	wg.Add(3) // Listen, ProcessMessages, ProcessGameMessages
+	// Constrói endereços da rede
+	listenAddr := fmt.Sprintf("%s:%d", nodeAddresses[nodeID], basePorts[nodeID])
+	nextNodeID := (nodeID + 1) % 4
+	nextNodeAddr := fmt.Sprintf("%s:%d", nodeAddresses[nextNodeID], basePorts[nextNodeID])
 
-	// Goroutine para escutar mensagens da rede
-	go func() {
-		defer wg.Done()
-		node.Listen()
-	}()
+	fmt.Println("🎮 =================================")
+	fmt.Println("🎯 JOGO COPAS - REDE EM ANEL")
+	fmt.Println("🎮 =================================")
+	fmt.Printf("🔗 Nó ID: %d\n", nodeID)
+	fmt.Printf("👤 Jogador: %s\n", playerName)
+	fmt.Printf("🌐 Endereço local: %s\n", listenAddr)
+	fmt.Printf("📡 Próximo nó: %s\n", nextNodeAddr)
+	if isHost {
+		fmt.Println("👑 ESTE É O NÓ HOST")
+	}
+	fmt.Println("🎮 =================================")
 
-	// Goroutine para processar mensagens da rede
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-time.After(100 * time.Millisecond):
-				// Verifica se deve encerrar
-				if shouldExit(node) {
-					return
-				}
-			}
-		}
-	}()
+	// Cria o controller do jogo
+	gameController := controller.NewGameController(nodeID, playerName, isHost)
 
-	// Goroutine para processar mensagens específicas do jogo
-	go func() {
-		defer wg.Done()
-		processGameMessages(node, gameController, logger)
-	}()
+	// Define callbacks
+	gameController.SetOnPlayerJoin(func(playerID int, playerName string) {
+		fmt.Printf("🎉 %s entrou no jogo!\n", playerName)
+	})
 
-	// Aguarda estabilização da rede
-	logger.Println("⏳ Aguardando estabilização da rede...")
-	time.Sleep(2 * time.Second)
+	gameController.SetOnGameEnd(func(winnerID int, winnerName string) {
+		fmt.Printf("\n🏆 JOGO FINALIZADO!\n")
+		fmt.Printf("🎊 Vencedor: %s (ID: %d)\n", winnerName, winnerID)
+		fmt.Println("Pressione Ctrl+C para sair")
+	})
 
-	// Inicia o controlador do jogo
-	go gameController.Start()
+	gameController.SetOnError(func(err error) {
+		fmt.Printf("❌ Erro no jogo: %v\n", err)
+	})
 
-	// Captura sinais de encerramento
+	// Inicia o controller
+	err = gameController.Start(listenAddr, nextNodeAddr)
+	if err != nil {
+		fmt.Printf("❌ Erro ao iniciar controller: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Configura tratamento de sinais para encerramento limpo
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	logger.Println("✅ Sistema iniciado. Pressione Ctrl+C para encerrar.")
+	// Inicia loop principal do jogo
+	go gameLoop(gameController)
 
 	// Aguarda sinal de encerramento
 	<-sigChan
-
-	// Encerramento gracioso
-	logger.Println("🔄 Encerrando sistema...")
-
-	// Notifica outros nós sobre o encerramento
-	if _, hasToken := node.GetState(); hasToken {
-		node.SendBroadcast("PLAYER_DISCONNECTED")
-		node.PassToken((nodeID + 1) % 4)
-	}
-
-	// Fecha conexões
-	node.Close()
-
-	// Aguarda finalização das goroutines com timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		logger.Println("✅ Sistema encerrado com sucesso.")
-	case <-time.After(5 * time.Second):
-		logger.Println("⚠️ Timeout no encerramento, forçando saída.")
-	}
+	fmt.Println("\n🛑 Encerrando jogo...")
+	gameController.Stop()
+	fmt.Println("👋 Até logo!")
 }
 
-func printBanner(nodeID int, logger *log.Logger) {
-	fmt.Println("\n" + "==================================================================")
-	fmt.Println("🎮           JOGO DE COPAS - REDE EM ANEL")
-	fmt.Println("===================================================================")
-	fmt.Printf("🖥️  Nó: %d\n", nodeID)
-	if nodeID == 0 {
-		fmt.Println("👑 Tipo: HOST (inicia o jogo)")
-	} else {
-		fmt.Println("👤 Tipo: CLIENTE")
-	}
-	fmt.Printf("🌐 Porta: %d\n", basePorts[nodeID])
-	fmt.Printf("📡 Próximo nó: %d (porta %d)\n", (nodeID+1)%4, basePorts[(nodeID+1)%4])
-	fmt.Println("====================================================================")
-	fmt.Println()
+// Loop principal do jogo - interface de linha de comando
+func gameLoop(gc *controller.GameController) {
+	scanner := bufio.NewScanner(os.Stdin)
 
-	logger.Printf("🚀 Iniciando Nó %d...", nodeID)
-}
-
-func processGameMessages(node *network.Node, gameController *controller.GameController, logger *log.Logger) {
 	for {
-		select {
-		case msg := <-node.Messages:
-			// Processa apenas mensagens do tipo GAME
-			if msg.Type == network.MSG_GAME || msg.Type == network.MSG_BROADCAST {
-				gameController.ProcessGameMessage(msg.Content)
-			}
-		case <-time.After(100 * time.Millisecond):
-			// Timeout para não bloquear indefinidamente
+		// Verifica se é a vez do jogador
+		if !gc.IsMyTurn() {
+			// Se não é a vez, aguarda um pouco e verifica novamente
+			time.Sleep(1 * time.Second)
 			continue
+		}
+
+		game := gc.GetGame()
+		if game == nil || game.GameOver {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// Obtém jogadas válidas
+		validPlays := game.GetValidPlays(gc.GetNodeID())
+		if len(validPlays) == 0 {
+			fmt.Println("❌ Nenhuma jogada válida disponível")
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// Aguarda input do usuário
+		fmt.Print("👉 Digite o número da carta (1-13): ")
+		if scanner.Scan() {
+			input := strings.TrimSpace(scanner.Text())
+
+			// Verifica comandos especiais
+			switch input {
+			case "quit", "exit", "q":
+				fmt.Println("🛑 Saindo do jogo...")
+				os.Exit(0)
+			case "help", "h":
+				showHelp()
+				continue
+			case "status", "s":
+				showDetailedStatus(gc)
+				continue
+			}
+
+			// Tenta converter para número
+			cardIndex, err := strconv.Atoi(input)
+			if err != nil {
+				fmt.Printf("❌ Entrada inválida: %s\n", input)
+				continue
+			}
+
+			// Verifica se o índice é válido
+			hand, err := game.GetPlayerHand(gc.GetNodeID())
+			if err != nil {
+				fmt.Printf("❌ Erro ao obter mão: %v\n", err)
+				continue
+			}
+
+			if cardIndex < 1 || cardIndex > len(hand) {
+				fmt.Printf("❌ Número inválido. Use 1-%d\n", len(hand))
+				continue
+			}
+
+			// Obtém a carta selecionada
+			selectedCard := hand[cardIndex-1]
+
+			// Verifica se a carta é válida
+			isValid := false
+			for _, validCard := range validPlays {
+				if validCard.Naipe == selectedCard.Naipe && validCard.Valor == selectedCard.Valor {
+					isValid = true
+					break
+				}
+			}
+
+			if !isValid {
+				fmt.Printf("❌ Carta inválida: %s\n", selectedCard.String())
+				fmt.Println("💡 Jogadas válidas disponíveis:")
+				for i, card := range validPlays {
+					fmt.Printf("   %d. %s\n", i+1, card.String())
+				}
+				continue
+			}
+
+			// Joga a carta
+			err = gc.PlayCard(selectedCard)
+			if err != nil {
+				fmt.Printf("❌ Erro ao jogar carta: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("✅ Você jogou: %s\n", selectedCard.String())
 		}
 	}
 }
 
-func shouldExit(node *network.Node) bool {
-	// Implementa lógica para determinar se deve encerrar
-	// Por exemplo, se perdeu conectividade por muito tempo
-	return false
+// Mostra ajuda
+func showHelp() {
+	fmt.Println("\n📚 COMANDOS DISPONÍVEIS:")
+	fmt.Println("  1-13    : Jogar carta (número correspondente na sua mão)")
+	fmt.Println("  help, h : Mostrar esta ajuda")
+	fmt.Println("  status, s : Mostrar status detalhado")
+	fmt.Println("  quit, q : Sair do jogo")
+	fmt.Println("\n🎯 REGRAS RÁPIDAS:")
+	fmt.Println("  • Evite cartas de Copas (♥) e Dama de Espadas (♠Q)")
+	fmt.Println("  • Copas (♥): 1 ponto cada")
+	fmt.Println("  • Dama de Espadas (♠Q): 13 pontos")
+	fmt.Println("  • Menor pontuação vence")
+	fmt.Println("  • Deve seguir o naipe se tiver")
+	fmt.Println()
+}
+
+// Mostra status detalhado
+func showDetailedStatus(gc *controller.GameController) {
+	fmt.Println("\n📊 STATUS DETALHADO:")
+	fmt.Printf("🎮 Estado do jogo: %s\n", gc.GetGameState())
+
+	players := gc.GetPlayers()
+	fmt.Println("👥 Jogadores:")
+	for id, name := range players {
+		fmt.Printf("   %d: %s\n", id, name)
+	}
+
+	game := gc.GetGame()
+	if game != nil {
+		fmt.Printf("🔄 Rodada atual: %d/13\n", len(game.CompletedTricks)+1)
+		fmt.Printf("💖 Copas quebradas: %v\n", game.HeartsBreoken)
+		fmt.Printf("🎯 Jogador atual: %s\n", players[game.CurrentPlayer])
+
+		if game.GameOver {
+			fmt.Printf("🏆 Vencedor: %s\n", players[game.WinnerID])
+		}
+	}
+	fmt.Println()
 }
