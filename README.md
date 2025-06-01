@@ -11,74 +11,65 @@ Implementar o jogo copas em uma rede em anel com 4 máquinas
 - Não é necessário timeout
 - O protocolo pode ser de livre escolha
 
-# Regras do Jogo de Copas (Hearts)
+# 🎯 Regras do Jogo Copas (Sem Passar Cartas)
 
-## Objetivo do Jogo
-- Evitar pegar cartas de penalidade durante as rodadas.
-- Cada **♥ (Copas)** vale **1 ponto**.
-- A **Q♠ (Dama de Espadas)** vale **13 pontos**.
-- O jogo termina quando um jogador atinge **100 pontos ou mais**.
-- **Vence quem tiver menos pontos** ao final.
+## 🔸 Objetivo do Jogo
+- Evitar pegar cartas de copas (♥) e a dama de espadas (♠Q), que valem pontos negativos.
+- O jogo termina quando algum jogador atinge ou ultrapassa **100 pontos**.
+- Vence quem tiver a **menor pontuação**.
 
 ---
 
-## Jogadores
+## 🃏 Configuração
+- Baralho padrão de 52 cartas (sem coringas).
 - 4 jogadores.
-- Baralho padrão de **52 cartas** (sem coringas).
-- Cada jogador recebe **13 cartas**.
+- Cada jogador recebe 13 cartas.
 
 ---
 
-## Passes (Troca de Cartas)
-Antes de cada rodada, cada jogador passa 3 cartas:
-
-| Rodada | Direção do Passe |
-|--------|------------------|
-| 1ª     | Esquerda         |
-| 2ª     | Direita          |
-| 3ª     | Frente           |
-| 4ª     | Sem passe        |
-
-Depois da 4ª rodada, o ciclo se repete.
+## 🔸 Ordem de Jogada
+- Quem tiver o **2 de paus (♣2)** começa a primeira rodada.
+- Na primeira rodada, é **obrigatório começar com o 2 de paus (♣2)**.
+- Depois disso, os jogadores seguem no sentido **horário**.
 
 ---
 
-## Jogando uma Rodada
-- O jogador com o **2♣ (Dois de Paus)** começa a rodada.
-- Deve obrigatoriamente jogar o **2♣** como primeira carta.
-- Os jogadores devem **seguir o naipe da carta inicial** se possível.
-- Quem não puder seguir o naipe pode jogar qualquer outra carta (com restrições, veja abaixo).
-- A **maior carta do naipe inicial vence a vaza** e começa a próxima.
+## 🔸 Regras das Rodadas (Truques)
+1. O jogador que inicia joga uma carta de qualquer naipe válido (com restrições abaixo).
+2. Os outros jogadores, na ordem, devem:
+   - Jogar uma carta do **mesmo naipe** se tiverem.
+   - Se não tiverem, podem jogar qualquer carta (**restrição sobre copas abaixo**).
+3. **Copas (♥) não podem ser jogadas até que sejam "quebradas"**, ou seja, até que algum jogador jogue uma carta de copas por não ter o naipe pedido.
+   - **Exceção:** Se o jogador não tiver nenhuma carta de outro naipe, pode jogar copas mesmo antes de serem quebradas.
+4. Na **primeira rodada (quando começa com ♣2)**:
+   - **Não é permitido jogar cartas de copas (♥) nem a dama de espadas (♠Q)**.
+   - Se o jogador não tiver paus, deve jogar qualquer outra carta que **não seja ♥ nem ♠Q**.
 
 ---
 
-## Regras para Copas
-- **Copas não pode ser iniciada (quebrada)** até que alguém jogue uma carta de copas **porque não tinha o naipe da vez**.
-- Exceção: se o jogador **só tiver cartas de copas**, pode começar com uma.
+## 🔸 Quem Ganha o Truque
+- Vence o truque quem jogou a carta **mais alta do naipe que iniciou a rodada**.
+- Quem vence o truque é quem começa o próximo.
 
 ---
 
-## Regras para a Dama de Espadas (Q♠)
-- Pode ser jogada **somente quando o jogador não puder seguir o naipe da rodada**.
-- Pode ser jogada como carta inicial **somente após as copas serem quebradas** (ou se for a única opção do jogador).
+## 🔸 Pontuação das Cartas
+- Cada carta de **copas (♥)** vale **+1 ponto**.
+- A **dama de espadas (♠Q)** vale **+13 pontos**.
+- Todas as outras cartas valem **0 pontos**.
 
 ---
 
-## Pontuação
-- Cada carta de **♥**: **1 ponto**
-- **Q♠**: **13 pontos**
-- Total de pontos em uma rodada: **26 pontos**
-
-### "Atirar a Lua" (Shoot the Moon)
-Se um jogador capturar **todos os 26 pontos**:
-- Ele pode escolher:
-  - **Zerar sua pontuação**
-  - **Adicionar 26 pontos a todos os outros jogadores**
+## 🔸 Shoot the Moon (Varredura)
+- Se um jogador pegar **todas as 13 cartas de copas (♥) e a dama de espadas (♠Q)** na mesma rodada:
+   - Ao invés de receber 26 pontos, o jogador escolhe:
+     - **Todos os outros jogadores recebem +26 pontos.**
+- (Em algumas variações, o jogador pode escolher não fazer isso, mas na regra padrão isso é obrigatório.)
 
 ---
 
-## Fim do Jogo
-- O jogo termina quando **um jogador chega a 100 pontos ou mais**.
-- O jogador com **menos pontos** vence.
+## 🔸 Fim do Jogo
+- Quando algum jogador atinge ou ultrapassa **100 pontos**, o jogo termina.
+- O jogador com a **menor pontuação vence**.
 
 ---
