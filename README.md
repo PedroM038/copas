@@ -7,7 +7,8 @@ Implementar o jogo copas em uma rede em anel com 4 máquinas
 - Todas as mensagens devem dar a volta toda pelo anel
 - O bastão não é temporizado
 - As mensagens não são temporizadas
-- Utilizar linguagem Go
+- Utilizar linguagem Python
+- Utilizar o protocolo UDP
 - Não é necessário timeout
 - O protocolo pode ser de livre escolha
 
