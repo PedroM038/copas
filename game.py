@@ -94,196 +94,205 @@ def log_message(action, message_type, target=None, data=None):
         print(f"[{timestamp}] 📢 BROADCAST: {message_type} - {data}")
 
 # PROCESSAMENTO DE MENSAGENS
+
 def handle_message(message, addr):
-    global token, game_over, current_trick_cards, players_scores, game_started, connected_players
+    global token
     
+    # Se for apenas o token, processa diretamente
+    if message == "TOKEN":
+        token = True
+        log_message("RECV", "TOKEN", addr, "Token recebido")
+        print(f"🎯 Token recebido! É sua vez de jogar.")
+        return
+    
+    # Tenta processar como JSON
     try:
         data = json.loads(message)
-        message_type = data.get("type", "UNKNOWN")
-        log_message("RECV", message_type, f"{addr[0]}:{addr[1]}", data)
+        msg_type = data.get("type")
         
-        if data["type"] == "CONNECT":
+        log_message("RECV", msg_type, addr, data)
+        
+        if msg_type == "CONNECT":
             process_connect_message(data)
-        elif data["type"] == "START_GAME":
+        elif msg_type == "START_GAME":
             process_start_game_message(data)
-        elif data["type"] == "TOKEN":
-            process_token_message(data)
-        elif data["type"] == "GAME":
+        elif msg_type == "GAME":
             process_game_message(data)
-        elif data["type"] == "SCORES":
-            process_scores_message(data)
-        elif data["type"] == "END_TRICK":
+        elif msg_type == "END_TRICK":
             process_end_trick_message(data)
-        elif data["type"] == "NEW_HAND":
+        elif msg_type == "SCORES":
+            process_scores_message(data)
+        elif msg_type == "NEW_HAND":
             process_new_hand_message(data)
-        elif data["type"] == "GAME_END":
+        elif msg_type == "GAME_END":
             process_game_end_message(data)
+        else:
+            print(f"⚠️ Tipo de mensagem desconhecido: {msg_type}")
+    
     except json.JSONDecodeError:
-        if message == "TOKEN":
-            log_message("RECV", "TOKEN", f"{addr[0]}:{addr[1]}", "Token recebido")
-            token = True
-            print(f"🎯 Token recebido de {addr}")
+        print(f"⚠️ Erro ao decodificar JSON: {message}")
 
 def process_connect_message(data):
-    global connected_players, all_hands
+    global connected_players
     
-    if current_node_index == 0:  # Host
-        player_id = data["player"]
+    player_id = data.get("player")
+    
+    # Apenas o host (player 0) processa conexões
+    if current_node_index == 0:
         connected_players.add(player_id)
-        print(f"🔗 Player {player_id} conectado. Total: {len(connected_players)}/4")
+        print(f"🔗 Player {player_id} conectado! ({len(connected_players)}/4)")
         
-        # Quando todos estiverem conectados, inicia o jogo
-        if len(connected_players) == 4:  # 3 outros + host = 4 total
-            print("✅ Todos os jogadores conectados! Iniciando jogo...")
-            time.sleep(1)  # Pequena pausa para garantir sincronização
+        # Se todos os 4 jogadores estão conectados, inicia o jogo
+        if len(connected_players) == 4:
+            print("🎉 Todos os jogadores conectados! Iniciando jogo...")
             start_game_as_host()
 
 def process_start_game_message(data):
-    global player_hand, game_started, token
+    global game_started, player_hand, token
     
-    player_hand = data["hands"][current_node_index]
-    game_started = True
+    hands = data.get("hands", [])
     
-    print(f"🎮 Jogo iniciado! Suas cartas: {player_hand}")
-    
-    # O jogador com 2♣ recebe o token
-    if "2♣" in player_hand:
-        token = True
-        print("🍀 Você tem o 2♣, você começa!")
-
-def start_game_as_host():
-    global all_hands, game_started, token, player_hand
-    
-    print("🎲 Host distribuindo cartas...")
-    # Gera e distribui as cartas
-    all_hands = deal_cards()
-    player_hand = all_hands[0]  # Host pega a primeira mão
-    
-    # Envia as cartas para todos os jogadores
-    start_message = {
-        "type": "START_GAME",
-        "hands": all_hands
-    }
-    send_to_all(json.dumps(start_message))
-    
-    game_started = True
-    print(f"🎮 Jogo iniciado! Suas cartas: {player_hand}")
-    
-    # O jogador com 2♣ recebe o token
-    if "2♣" in player_hand:
-        token = True
-        print("🍀 Você tem o 2♣, você começa!")
-
-def announce_connection():
-    """Anuncia conexão para o host"""
-    if current_node_index != 0:
-        connect_message = {
-            "type": "CONNECT",
-            "player": current_node_index
-        }
-        send_message(json.dumps(connect_message), 0)  # Envia para o host
-        print("📡 Conexão anunciada para o host")
-
-def process_token_message(data):
-    global token
-    token = True
-    print("🎯 Token recebido via JSON")
+    if current_node_index < len(hands):
+        player_hand = hands[current_node_index]
+        game_started = True
+                
+        # Verifica se este jogador tem o 2♣ e deve começar
+        if "2♣" in player_hand:
+            token = True
+            print("🍀 Você tem o 2♣, você começa!")
 
 def process_game_message(data):
-    global current_trick_cards, hearts_broken, first_trick, current_trick, token
+    global current_trick_cards, current_trick_suit, trick_starter
     
-    if data["action"] == "PLAY":
+    action = data.get("action")
+    
+    if action == "PLAY":
+        card = data.get("card")
+        player = data.get("player")
+        
+        # Adiciona a carta jogada às cartas da rodada atual
         current_trick_cards.append({
-            "card": data["card"],
-            "player": data["player"]
+            "card": card,
+            "player": player
         })
-        print(f"🃏 Player {data['player']} jogou {data['card']}")
         
-        if get_card_suit(data["card"]) == '♥':
-            hearts_broken = True
-            print("💔 Copas quebrados!")
+        #printa quantidade de cartas jogadas no trick atual
+        print(f"📋 Cartas jogadas no trick atual: {len(current_trick_cards)}")
+
+        # Se é a primeira carta da rodada, define o naipe da rodada e quem começou
+        if len(current_trick_cards) == 1:
+            current_trick_suit = get_card_suit(card)
+            trick_starter = player
         
-        # Verifica se o trick está completo (4 cartas)
+        print(f"🃏 Player {player} jogou: {card}")
+        print(f"📋 Cartas na mesa: {[c['card'] for c in current_trick_cards]}")
+        
+        # Se todos os 4 jogadores jogaram, termina a rodada
         if len(current_trick_cards) == 4:
-            print(len(current_trick_cards), "cartas jogadas no trick atual")
-            winner_player = get_trick_winner(current_trick_cards)
-            points = calculate_trick_points(current_trick_cards)
-            
-            print(f"🏆 Player {winner_player} ganhou o trick com {points} pontos")
-            
-            # Envia mensagem de fim de trick com todas as informações necessárias
-            end_trick_message = {
-                "type": "END_TRICK",
-                "winner": winner_player,
-                "points": points,
-                "trick_number": current_trick + 1,
-                "scores": players_scores.copy()  # Scores atuais antes da atualização
-            }
-            send_to_all(json.dumps(end_trick_message))
-            
-            # Processa localmente também
-            process_end_trick_message(end_trick_message)
+            end_trick()
 
 def process_end_trick_message(data):
-    global current_trick_cards, first_trick, current_trick, players_scores, token
+    global current_trick_cards, current_trick, first_trick, players_scores, token
     
-    winner_player = data["winner"]
-    points = data["points"]
+    winner = data.get("winner")
+    points = data.get("points")
+    scores = data.get("scores")
     
-    # Atualiza pontuação
-    players_scores[winner_player] += points
+    print(f"\n🏆 Player {winner} ganhou a rodada!")
+    print(f"📊 Pontos da rodada: {points}")
     
-    print(f"📊 Trick {data['trick_number']} completado!")
-    print(f"🏆 Vencedor: Player {winner_player} (+{points} pontos)")
-    print(f"📈 Pontuações atualizadas: {players_scores}")
+    # Atualiza pontuações
+    if scores:
+        players_scores = scores.copy()
+        print(f"📈 Pontuações atuais: {players_scores}")
     
-    # Limpa as cartas do trick atual
+    # Limpa as cartas da mesa
     current_trick_cards = []
-    first_trick = False
     current_trick += 1
+    first_trick = False
     
-    # O vencedor do trick recebe o token para começar o próximo
-    if current_node_index == winner_player:
+    # O vencedor da rodada recebe o token para começar a próxima
+    if winner == current_node_index:
         token = True
-        print("🎯 Você ganhou o trick! Você começa o próximo.")
-    else:
-        token = False
-        print(f"🔄 Player {winner_player} começa o próximo trick.")
+        print("🎯 Você ganhou a rodada e vai começar a próxima!")
     
-    # Verifica fim de jogo (13 tricks completados)
+    # Verifica se completou uma mão (13 rodadas)
     if current_trick >= 13:
         check_game_end()
 
 def process_scores_message(data):
     global players_scores
-    players_scores = data["scores"]
-    print(f"📊 Pontuações atualizadas: {players_scores}")
+    
+    scores = data.get("scores")
+    if scores:
+        players_scores = scores.copy()
+        print(f"📊 Pontuações atualizadas: {players_scores}")
 
 def process_new_hand_message(data):
-    global player_hand, token, first_trick, hearts_broken, current_trick
+    global player_hand, current_trick, first_trick, hearts_broken, token
     
-    player_hand = data["hands"][current_node_index]
-    first_trick = True
-    hearts_broken = False
-    current_trick = 0
+    hands = data.get("hands", [])
     
-    print(f"🆕 Nova mão iniciada! Suas cartas: {player_hand}")
-    
-    # Quem tem 2♣ recebe o token
-    if "2♣" in player_hand:
-        token = True
-        print("🍀 Você tem o 2♣, você começa!")
+    if current_node_index < len(hands):
+        player_hand = hands[current_node_index]
+        current_trick = 0
+        first_trick = True
+        hearts_broken = False
+        token = False
+        
+        print(f"🆕 Nova mão iniciada! Suas cartas: {sorted(player_hand, key=lambda x: (get_card_suit(x), get_card_value(x)))}")
+        
+        # Verifica se este jogador tem o 2♣ e deve começar
+        if "2♣" in player_hand:
+            token = True
+            print("🍀 Você tem o 2♣, você começa a nova mão!")
 
 def process_game_end_message(data):
     global game_over, game_winner
     
+    winner = data.get("winner")
+    final_scores = data.get("final_scores")
+    
     game_over = True
-    game_winner = data["winner"]
-    final_scores = data["final_scores"]
+    game_winner = winner
     
     print(f"\n🎉 JOGO TERMINADO!")
-    print(f"🏆 Player {game_winner} venceu com {final_scores[game_winner]} pontos!")
+    print(f"🏆 Player {winner} venceu com {final_scores[winner]} pontos!")
     print(f"📊 Pontuações finais: {final_scores}")
+    
+    # Encerra o programa após alguns segundos
+    time.sleep(3)
+    sock.close()
+    sys.exit(0)
+    
+def end_trick():
+    global current_trick_cards, players_scores
+    
+    # Calcula quem ganhou a rodada
+    winner = get_trick_winner(current_trick_cards)
+    
+    # Calcula pontos da rodada
+    points = calculate_trick_points(current_trick_cards)
+    
+    # Adiciona pontos ao vencedor
+    players_scores[winner] += points
+    
+    print(f"\n🏆 Rodada {current_trick + 1} finalizada!")
+    print(f"📋 Cartas jogadas: {[card_info['card'] for card_info in current_trick_cards]}")
+    print(f"🎯 Vencedor: Player {winner}")
+    print(f"💔 Pontos: {points}")
+    
+    # Envia resultado para todos os jogadores
+    end_trick_message = {
+        "type": "END_TRICK",
+        "winner": winner,
+        "points": points,
+        "scores": players_scores.copy(),
+        "trick": current_trick + 1
+    }
+    send_to_all(json.dumps(end_trick_message))
+
+# LOGICA DO JOGO
 
 def create_deck():
     suits = ['♠', '♥', '♣', '♦']
@@ -413,11 +422,17 @@ def play_card(card):
             "player": current_node_index
         }
         send_to_all(json.dumps(message))
-        pass_token()
+        print(f"🃏 Você jogou: {card}")
+        # processar localmente
+        current_trick_cards.append({
+            "card": card,
+            "player": current_node_index
+        })
+        if (len(current_trick_cards) < 4):
+            pass_token()
     else:        
         print("❌ Você não tem essa carta na mão!")
         return
-    print(f"🃏 Você jogou: {card}")
 
 def check_game_end():
     global game_over, game_winner
@@ -469,6 +484,31 @@ def start_new_hand():
         token = True
         print("🍀 Você tem o 2♣, você começa a nova mão!")
 
+
+# Conexão e início do jogo
+def start_game_as_host():
+    global all_hands, game_started, token, player_hand
+    
+    print("🎲 Host distribuindo cartas...")
+    # Gera e distribui as cartas
+    all_hands = deal_cards()
+    player_hand = all_hands[0]  # Host pega a primeira mão
+    
+    # Envia as cartas para todos os jogadores
+    start_message = {
+        "type": "START_GAME",
+        "hands": all_hands
+    }
+    send_to_all(json.dumps(start_message))
+    
+    game_started = True
+    print(f"🎮 Jogo iniciado! Suas cartas: {player_hand}")
+    
+    # O jogador com 2♣ recebe o token
+    if "2♣" in player_hand:
+        token = True
+        print("🍀 Você tem o 2♣, você começa!")
+
 def initialize_connection():
     global current_round, game_over, hearts_broken, first_trick
     
@@ -485,6 +525,18 @@ def initialize_connection():
         announce_connection()
         print("⏳ Aguardando início do jogo...")
 
+def announce_connection():
+    """Anuncia conexão para o host"""
+    if current_node_index != 0:
+        connect_message = {
+            "type": "CONNECT",
+            "player": current_node_index
+        }
+        send_message(json.dumps(connect_message), 0)  # Envia para o host
+        print("📡 Conexão anunciada para o host")
+
+
+# main loop do jogo
 def main():
     print(f"🚀 Iniciando Player {current_node_index}")
     initialize_connection()
