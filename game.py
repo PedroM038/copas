@@ -22,7 +22,7 @@ next_node_index = (current_node_index + 1) % total_nodes
 game_over = False
 game_winner = None
 current_round = 0
-current_trick = 0
+current_trick = 1
 current_trick_cards = []
 player_hand = []
 players_scores = [0, 0, 0, 0]
@@ -60,8 +60,7 @@ def send_to_all(message):
         log_message("BROADCAST", "UNKNOWN", None, message)
     
     for i in range(total_nodes):
-        if i != current_node_index:
-            send_message(message, i)
+        send_message(message, i)
 
 def receive_message():
     while not game_over:
@@ -75,12 +74,12 @@ def receive_message():
 
 threading.Thread(target=receive_message, daemon=True).start()
 
-def pass_token():
+def pass_token(node_index):
     global token
     if token:
-        send_message("TOKEN", next_node_index)
+        send_message("TOKEN", node_index)
         token = False
-        print(f"🎯 Token passado para Player {next_node_index}")
+        print(f"🎯 Token passado para Player {node_index}")
 
 
 def log_message(action, message_type, target=None, data=None):
@@ -158,8 +157,10 @@ def process_start_game_message(data):
                 
         # Verifica se este jogador tem o 2♣ e deve começar
         if "2♣" in player_hand:
-            token = True
-            print("🍀 Você tem o 2♣, você começa!")
+            send_message("TOKEN", current_node_index)
+        else:
+            token = False
+            print(f"🔄 Player {current_node_index} não tem o 2♣, esperando o próximo jogador.")
 
 def process_game_message(data):
     global current_trick_cards, current_trick_suit, trick_starter
@@ -208,13 +209,7 @@ def process_end_trick_message(data):
     
     # Limpa as cartas da mesa
     current_trick_cards = []
-    current_trick += 1
     first_trick = False
-    
-    # O vencedor da rodada recebe o token para começar a próxima
-    if winner == current_node_index:
-        token = True
-        print("🎯 Você ganhou a rodada e vai começar a próxima!")
     
     # Verifica se completou uma mão (13 rodadas)
     if current_trick >= 13:
@@ -244,8 +239,10 @@ def process_new_hand_message(data):
         
         # Verifica se este jogador tem o 2♣ e deve começar
         if "2♣" in player_hand:
-            token = True
-            print("🍀 Você tem o 2♣, você começa a nova mão!")
+            send_message("TOKEN", current_node_index)
+        else:
+            token = False
+            print(f"🔄 Player {current_node_index} não tem o 2♣, esperando o próximo jogador.")
 
 def process_game_end_message(data):
     global game_over, game_winner
@@ -266,7 +263,7 @@ def process_game_end_message(data):
     sys.exit(0)
     
 def end_trick():
-    global current_trick_cards, players_scores
+    global current_trick_cards, players_scores, current_trick
     
     # Calcula quem ganhou a rodada
     winner = get_trick_winner(current_trick_cards)
@@ -277,10 +274,12 @@ def end_trick():
     # Adiciona pontos ao vencedor
     players_scores[winner] += points
     
-    print(f"\n🏆 Rodada {current_trick + 1} finalizada!")
+    print(f"\n🏆 Rodada {current_trick} finalizada!")
     print(f"📋 Cartas jogadas: {[card_info['card'] for card_info in current_trick_cards]}")
     print(f"🎯 Vencedor: Player {winner}")
     print(f"💔 Pontos: {points}")
+    
+    current_trick += 1
     
     # Envia resultado para todos os jogadores
     end_trick_message = {
@@ -423,13 +422,7 @@ def play_card(card):
         }
         send_to_all(json.dumps(message))
         print(f"🃏 Você jogou: {card}")
-        # processar localmente
-        current_trick_cards.append({
-            "card": card,
-            "player": current_node_index
-        })
-        if (len(current_trick_cards) < 4):
-            pass_token()
+        pass_token(next_node_index)
     else:        
         print("❌ Você não tem essa carta na mão!")
         return
@@ -478,12 +471,11 @@ def start_new_hand():
         }
         send_to_all(json.dumps(start_message))
     
-    # Reset token - quem tem 2♣ começa
-    token = False
     if "2♣" in player_hand:
-        token = True
-        print("🍀 Você tem o 2♣, você começa a nova mão!")
-
+        send_message("TOKEN", current_node_index)
+    else:
+        token = False
+        print(f"🔄 Player {current_node_index} não tem o 2♣, esperando o próximo jogador.")
 
 # Conexão e início do jogo
 def start_game_as_host():
@@ -506,8 +498,10 @@ def start_game_as_host():
     
     # O jogador com 2♣ recebe o token
     if "2♣" in player_hand:
-        token = True
-        print("🍀 Você tem o 2♣, você começa!")
+        send_message("TOKEN", current_node_index)
+    else:
+        token = False
+        print(f"🔄 Player {current_node_index} não tem o 2♣, esperando o próximo jogador.")
 
 def initialize_connection():
     global current_round, game_over, hearts_broken, first_trick
