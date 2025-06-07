@@ -2,8 +2,8 @@ import random
 import time
 import sys
 import signal
-import json
 from network import NetworkManager
+from protocol import Protocol
 
 # Configuração dos nós
 nodes = [
@@ -15,9 +15,11 @@ nodes = [
 
 class HeartsGame:
     def __init__(self, node_index):
-        self.current_node_index = node_index
+        self.player_index = node_index
+        
+        # Configuração de rede
         self.network = NetworkManager(node_index, nodes)
-        self.network.set_message_handler(self.handle_message)
+        self.protocol = Protocol(self.network, self)
         
         # Variáveis do jogo
         self.game_over = False
@@ -29,192 +31,127 @@ class HeartsGame:
         self.players_scores = [0, 0, 0, 0]
         self.token = False
         self.hearts_broken = False
-        self.trick_starter = None
-        self.current_trick_suit = None
         self.first_trick = True
         self.game_started = False
         self.connected_players = set()
-        self.all_hands = []
 
-    # PROCESSAMENTO DE MENSAGENS
-    def handle_message(self, message, addr):
-        # Se for apenas o token, processa diretamente
-        if message == "TOKEN":
-            self.token = True
-            print(f"🎯 Token recebido! É sua vez de jogar.")
-            return
-        
-        # Tenta processar como JSON
-        try:
-            data = json.loads(message)
-            msg_type = data.get("type")
-            
-            if msg_type == "CONNECT":
-                self.process_connect_message(data)
-            elif msg_type == "START_GAME":
-                self.process_start_game_message(data)
-            elif msg_type == "GAME":
-                self.process_game_message(data)
-            elif msg_type == "END_TRICK":
-                self.process_end_trick_message(data)
-            elif msg_type == "SCORES":
-                self.process_scores_message(data)
-            elif msg_type == "NEW_HAND":
-                self.process_new_hand_message(data)
-            elif msg_type == "GAME_END":
-                self.process_game_end_message(data)
-            else:
-                print(f"⚠️ Tipo de mensagem desconhecido: {msg_type}")
-        
-        except json.JSONDecodeError:
-            print(f"⚠️ Erro ao decodificar JSON: {message}")
+    # MÉTODOS DE ESTADO DO JOGO
+    def is_host(self):
+        """Verifica se é o host"""
+        return self.player_index == 0
 
-    def process_connect_message(self, data):
-        player_id = data.get("player")
-        
-        # Apenas o host (player 0) processa conexões
-        if self.current_node_index == 0:
-            self.connected_players.add(player_id)
-            print(f"🔗 Player {player_id} conectado! ({len(self.connected_players)}/4)")
-            
-            # Se todos os 4 jogadores estão conectados, inicia o jogo
-            if len(self.connected_players) == 4:
-                print("🎉 Todos os jogadores conectados! Iniciando jogo...")
-                self.start_game_as_host()
+    def add_connected_player(self, player_id):
+        """Adiciona jogador conectado"""
+        self.connected_players.add(player_id)
+        if self.is_host():
+            self.connected_players.add(0)  # Host sempre está conectado
+        return len(self.connected_players)
 
-    def process_start_game_message(self, data):
-        hands = data.get("hands", [])
-        
-        if self.current_node_index < len(hands):
-            self.player_hand = hands[self.current_node_index]
-            self.game_started = True
-                    
-            # Verifica se este jogador tem o 2♣ e deve começar
-            if "2♣" in self.player_hand:
-                self.network.send_message("TOKEN", self.current_node_index)
-            else:
-                self.token = False
-                print(f"🔄 Player {self.current_node_index} não tem o 2♣, esperando o próximo jogador.")
+    def all_players_connected(self):
+        """Verifica se todos os jogadores estão conectados"""
+        return len(self.connected_players) == 4
 
-    def process_game_message(self, data):
-        action = data.get("action")
-        
-        if action == "PLAY":
-            card = data.get("card")
-            player = data.get("player")
-            
-            # Adiciona a carta jogada às cartas da rodada atual
-            self.current_trick_cards.append({
-                "card": card,
-                "player": player
-            })
-            
-            print(f"📋 Cartas jogadas no trick atual: {len(self.current_trick_cards)}")
+    def set_player_hand(self, hand):
+        """Define a mão do jogador"""
+        self.player_hand = hand
 
-            # Se é a primeira carta da rodada, define o naipe da rodada e quem começou
-            if len(self.current_trick_cards) == 1:
-                self.current_trick_suit = self.get_card_suit(card)
-                self.trick_starter = player
-            
-            print(f"🃏 Player {player} jogou: {card}")
-            print(f"📋 Cartas na mesa: {[c['card'] for c in self.current_trick_cards]}")
-            
-            # Se todos os 4 jogadores jogaram, termina a rodada
-            if len(self.current_trick_cards) == 4:
-                self.end_trick()
+    def start_game(self):
+        """Marca o jogo como iniciado"""
+        self.game_started = True
 
-    def process_end_trick_message(self, data):
-        winner = data.get("winner")
-        points = data.get("points")
-        scores = data.get("scores")
-        
-        print(f"\n🏆 Player {winner} ganhou a rodada!")
-        print(f"📊 Pontos da rodada: {points}")
-        
-        # Atualiza pontuações
-        if scores:
-            self.players_scores = scores.copy()
-            print(f"📈 Pontuações atuais: {self.players_scores}")
-        
-        # Limpa as cartas da mesa
+    def has_two_of_clubs(self):
+        """Verifica se o jogador tem o 2♣"""
+        return "2♣" in self.player_hand
+
+    def add_card_to_trick(self, card, player):
+        """Adiciona carta à rodada atual"""
+        self.current_trick_cards.append({
+            "card": card,
+            "player": player
+        })
+
+    def get_current_trick_cards(self):
+        """Retorna lista das cartas na mesa"""
+        return [c['card'] for c in self.current_trick_cards]
+
+    def is_trick_complete(self):
+        """Verifica se a rodada está completa"""
+        return len(self.current_trick_cards) == 4
+
+    def reset_trick(self):
+        """Reseta para próxima rodada"""
         self.current_trick_cards = []
         self.first_trick = False
-        
-        # Verifica se completou uma mão (13 rodadas)
-        if self.current_trick >= 13:
-            self.check_game_end()
 
-    def process_scores_message(self, data):
-        scores = data.get("scores")
-        if scores:
-            self.players_scores = scores.copy()
-            print(f"📊 Pontuações atualizadas: {self.players_scores}")
+    def is_hand_complete(self):
+        """Verifica se a mão está completa (13 rodadas)"""
+        return self.current_trick >= 13
 
-    def process_new_hand_message(self, data):
-        hands = data.get("hands", [])
-        
-        if self.current_node_index < len(hands):
-            self.player_hand = hands[self.current_node_index]
-            self.current_trick = 0
-            self.first_trick = True
-            self.hearts_broken = False
-            self.token = False
-            
-            print(f"🆕 Nova mão iniciada! Suas cartas: {sorted(self.player_hand, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))}")
-            
-            # Verifica se este jogador tem o 2♣ e deve começar
-            if "2♣" in self.player_hand:
-                self.network.send_message("TOKEN", self.current_node_index)
-            else:
-                self.token = False
-                print(f"🔄 Player {self.current_node_index} não tem o 2♣, esperando o próximo jogador.")
+    def update_scores(self, scores):
+        """Atualiza pontuações"""
+        self.players_scores = scores.copy()
 
-    def process_game_end_message(self, data):
-        winner = data.get("winner")
-        final_scores = data.get("final_scores")
-        
+    def start_new_hand(self, hand):
+        """Inicia nova mão"""
+        self.player_hand = hand
+        self.current_trick = 0
+        self.first_trick = True
+        self.hearts_broken = False
+        self.token = False
+
+    def end_game(self, winner, final_scores):
+        """Finaliza o jogo"""
         self.game_over = True
         self.game_winner = winner
-        
-        print(f"\n🎉 JOGO TERMINADO!")
-        print(f"🏆 Player {winner} venceu com {final_scores[winner]} pontos!")
-        print(f"📊 Pontuações finais: {final_scores}")
-        
-        # Encerra o programa após alguns segundos
-        time.sleep(3)
-        self.network.close()
-        sys.exit(0)
+        self.players_scores = final_scores.copy()
 
-    # LÓGICA DO JOGO
-    def end_trick(self):
-        # Calcula quem ganhou a rodada
+    def receive_token(self):
+        """Recebe o token (evita duplicação)"""
+        if not self.token:  # Só aceita se não tiver já
+            self.token = True
+            return True
+        return False
+
+    def can_play_card(self, card):
+        """Verifica se pode jogar a carta"""
+        return card in self.player_hand
+
+    def remove_card_from_hand(self, card):
+        """Remove carta da mão"""
+        if card in self.player_hand:
+            self.player_hand.remove(card)
+            if self.get_card_suit(card) == '♥':
+                self.hearts_broken = True
+            return True
+        return False
+
+    def calculate_trick_result(self):
+        """Calcula resultado da rodada"""
         winner = self.get_trick_winner(self.current_trick_cards)
-        
-        # Calcula pontos da rodada
         points = self.calculate_trick_points(self.current_trick_cards)
-        
-        # Adiciona pontos ao vencedor
         self.players_scores[winner] += points
-        
-        print(f"\n🏆 Rodada {self.current_trick} finalizada!")
-        print(f"📋 Cartas jogadas: {[card_info['card'] for card_info in self.current_trick_cards]}")
-        print(f"🎯 Vencedor: Player {winner}")
-        print(f"💔 Pontos: {points}")
-        
-        self.current_trick += 1
-        
-        # Envia resultado para todos os jogadores
-        end_trick_message = {
-            "type": "END_TRICK",
-            "winner": winner,
-            "points": points,
-            "scores": self.players_scores.copy(),
-            "trick": self.current_trick + 1
-        }
-        # se for o ganhador, envia mensagem para todo mundo
-        if self.current_node_index == winner:
-            self.network.send_to_all(json.dumps(end_trick_message))
+        return winner, points
 
+    def next_trick(self):
+        """Avança para próxima rodada"""
+        self.current_trick += 1
+
+    def initialize(self):
+        """Inicializa estado do jogo"""
+        self.current_round = 0
+        self.game_over = False
+        self.hearts_broken = False
+        self.first_trick = True
+
+    def is_last_player_in_trick(self):
+        """Verifica se é o último jogador a jogar no trick atual"""
+        return len(self.current_trick_cards) == 3  # 3 cartas já jogadas, falta 1
+
+    def will_complete_trick(self):
+        """Verifica se a próxima jogada completará o trick"""
+        return len(self.current_trick_cards) == 3
+
+    # LÓGICA DE CARTAS E REGRAS
     @staticmethod
     def create_deck():
         suits = ['♠', '♥', '♣', '♦']
@@ -255,18 +192,28 @@ class HeartsGame:
             return int(value)
 
     def find_card_by_number(self, number, valid_cards):
-        """Encontra carta na mão pelo número digitado"""
-        for card in valid_cards:
-            if self.get_card_number_value(card) == number:
-                return card
+        """Encontra carta na mão pelo número sequencial digitado"""
+        sorted_valid = sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        if 1 <= number <= len(sorted_valid):
+            return sorted_valid[number - 1]
         return None
 
     def display_cards_with_numbers(self, cards):
-        """Exibe cartas com seus números correspondentes"""
+        """Exibe cartas com seus números únicos para seleção"""
         print("\n🃏 Suas cartas:")
-        for i, card in enumerate(sorted(cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))):
-            number = self.get_card_number_value(card)
-            print(f"   {number}: {card}")
+        sorted_cards = sorted(cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        for i, card in enumerate(sorted_cards, 1):
+            print(f"   {i}: {card}")
+    
+    def display_valid_cards(self, valid_cards):
+        """Exibe cartas válidas com numeração sequencial"""
+        print(f"\n✅ Cartas válidas para jogar:")
+        sorted_valid = sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        for i, card in enumerate(sorted_valid, 1):
+            print(f"   {i}: {card}")
 
     def is_valid_play(self, card, trick_cards, player_hand):
         # Primeira jogada de todas deve ser 2♣
@@ -316,13 +263,19 @@ class HeartsGame:
         return points
 
     def get_trick_winner(self, trick_cards):
+        """Determina vencedor do trick (maior carta do naipe inicial)"""
+        if not trick_cards:
+            return None
+            
         lead_suit = self.get_card_suit(trick_cards[0]["card"])
+        winner_player = None
         highest_value = -1
-        winner_player = trick_cards[0]["player"]
         
         for card_info in trick_cards:
             card = card_info["card"]
             player = card_info["player"]
+            
+            # Só cartas do naipe inicial podem ganhar
             if self.get_card_suit(card) == lead_suit:
                 value = self.get_card_value(card)
                 if value > highest_value:
@@ -331,26 +284,6 @@ class HeartsGame:
         
         return winner_player
 
-    def play_card(self, card):
-        if card in self.player_hand:
-            self.player_hand.remove(card)
-            if self.get_card_suit(card) == '♥':
-                self.hearts_broken = True
-            
-            message = {
-                "type": "GAME",
-                "action": "PLAY",
-                "card": card,
-                "player": self.current_node_index
-            }
-            self.network.send_to_all(json.dumps(message))
-            print(f"🃏 Você jogou: {card}")
-            self.network.pass_token(self.network.next_node_index)
-            self.token = False
-        else:        
-            print("❌ Você não tem essa carta na mão!")
-            return
-
     def check_game_end(self):
         max_score = max(self.players_scores)
         if max_score >= 100:
@@ -358,13 +291,7 @@ class HeartsGame:
             min_score = min(self.players_scores)
             self.game_winner = self.players_scores.index(min_score)
             
-            # Envia mensagem de fim de jogo para todos
-            game_end_message = {
-                "type": "GAME_END",
-                "winner": self.game_winner,
-                "final_scores": self.players_scores.copy()
-            }
-            self.network.send_to_all(json.dumps(game_end_message))
+            self.protocol.send_game_end_message(self.game_winner, self.players_scores.copy())
             
             print(f"\n🎉 JOGO TERMINADO!")
             print(f"🏆 Player {self.game_winner} venceu com {min_score} pontos!")
@@ -373,82 +300,29 @@ class HeartsGame:
             # Se o jogo não acabou mas completou uma mão (13 tricks), inicia nova mão
             print(f"\n🔄 Mão completada! Pontuações atuais: {self.players_scores}")
             if max_score < 100:
-                self.start_new_hand()
+                self.start_new_hand_logic()
 
-    def start_new_hand(self):
+    def start_new_hand_logic(self):
         print("🆕 Iniciando nova mão...")
         self.current_trick = 0
         self.first_trick = True
         self.hearts_broken = False
         
-        if self.current_node_index == 0:  # Host redistribui as cartas
-            self.all_hands = self.deal_cards()
-            self.player_hand = self.all_hands[0]
-            
-            start_message = {
-                "type": "NEW_HAND",
-                "hands": self.all_hands
-            }
-            self.network.send_to_all(json.dumps(start_message))
+        if self.is_host():  # Host redistribui as cartas
+            hands = self.deal_cards()
+            self.player_hand = hands[0]
+            self.protocol.send_new_hand_message(hands)
         
-        if "2♣" in self.player_hand:
-            self.network.send_message("TOKEN", self.current_node_index)
+        if self.has_two_of_clubs():
+            self.protocol.send_token_to_self()
         else:
             self.token = False
-            print(f"🔄 Player {self.current_node_index} não tem o 2♣, esperando o próximo jogador.")
+            print(f"🔄 Player {self.player_index} não tem o 2♣, esperando o próximo jogador.")
 
-    # Conexão e início do jogo
-    def start_game_as_host(self):
-        print("🎲 Host distribuindo cartas...")
-        # Gera e distribui as cartas
-        self.all_hands = self.deal_cards()
-        self.player_hand = self.all_hands[0]  # Host pega a primeira mão
-        
-        # Envia as cartas para todos os jogadores
-        start_message = {
-            "type": "START_GAME",
-            "hands": self.all_hands
-        }
-        self.network.send_to_all(json.dumps(start_message))
-        
-        self.game_started = True
-        print(f"🎮 Jogo iniciado! Suas cartas: {self.player_hand}")
-        
-        # O jogador com 2♣ recebe o token
-        if "2♣" in self.player_hand:
-            self.network.send_message("TOKEN", self.current_node_index)
-        else:
-            self.token = False
-            print(f"🔄 Player {self.current_node_index} não tem o 2♣, esperando o próximo jogador.")
-
-    def initialize_connection(self):
-        self.current_round = 0
-        self.game_over = False
-        self.hearts_broken = False
-        self.first_trick = True
-        
-        if self.current_node_index == 0:
-            print(f"🎮 Player {self.current_node_index} (Host) - Aguardando outros jogadores...")
-            self.connected_players.add(0)  # Host está conectado
-        else:
-            print(f"🎮 Player {self.current_node_index} - Conectando ao jogo...")
-            self.announce_connection()
-            print("⏳ Aguardando início do jogo...")
-
-    def announce_connection(self):
-        """Anuncia conexão para o host"""
-        if self.current_node_index != 0:
-            connect_message = {
-                "type": "CONNECT",
-                "player": self.current_node_index
-            }
-            self.network.send_message(json.dumps(connect_message), 0)  # Envia para o host
-            print("📡 Conexão anunciada para o host")
-
-    # Loop principal do jogo
+    # Atualizar o loop principal do jogo
     def run(self):
-        print(f"🚀 Iniciando Player {self.current_node_index}")
-        self.initialize_connection()
+        print(f"🚀 Iniciando Player {self.player_index}")
+        self.protocol.initialize_connection()
         
         # Aguarda o jogo começar
         while not self.game_started and not self.game_over:
@@ -458,29 +332,28 @@ class HeartsGame:
         while not self.game_over:
             if self.token:
                 print(f"\n{'='*50}")
-                print(f"🎯 SUA VEZ! (Player {self.current_node_index})")
+                print(f"🎯 SUA VEZ! (Player {self.player_index})")
                 
+                # Mostra cartas na mesa se houver
+                if self.current_trick_cards:
+                    print(f"\n🃏 Cartas na mesa: {[card_info['card'] for card_info in self.current_trick_cards]}")
+                
+                # Exibe todas as cartas
                 self.display_cards_with_numbers(self.player_hand)
                 
                 valid_cards = [c for c in self.player_hand if self.is_valid_play(c, self.current_trick_cards, self.player_hand)]
                 
                 if valid_cards:
-                    print(f"\n✅ Cartas válidas para jogar:")
-                    for card in sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x))):
-                        number = self.get_card_number_value(card)
-                        print(f"   {number}: {card}")
-                    
-                    if self.current_trick_cards:
-                        print(f"\n🃏 Cartas na mesa: {[card_info['card'] for card_info in self.current_trick_cards]}")
+                    self.display_valid_cards(valid_cards)
                     
                     try:
-                        choice = int(input("\n🎯 Digite o número da carta para jogar: "))
+                        choice = int(input(f"\n🎯 Digite o número da carta (1-{len(valid_cards)}): "))
                         selected_card = self.find_card_by_number(choice, valid_cards)
                         
                         if selected_card:
-                            self.play_card(selected_card)
+                            self.protocol.play_card(selected_card)
                         else:
-                            print("❌ Número inválido! Tente novamente.")
+                            print(f"❌ Número inválido! Digite entre 1 e {len(valid_cards)}.")
                     except ValueError:
                         print("❌ Digite apenas números!")
                 else:

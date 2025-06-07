@@ -12,6 +12,17 @@ Implementar o jogo copas em uma rede em anel com 4 máquinas
 - Não é necessário timeout
 - O protocolo pode ser de livre escolha
 
+# Como executar
+1. Certifique-se de ter o Python instalado.
+
+2. Para executar em localHost, abra 4 terminais diferentes e execute:
+   ```bash
+   python main.py <player_id>
+   ```
+   Onde `<player_id>` pode ser 0, 1, 2 ou 3, representando cada jogador.
+
+3. Para executar em rede, substitua `localhost` pelo IP da máquina onde o servidor está rodando no arquivo game.py.
+
 # 🎯 Regras do Jogo Copas (Sem Passar Cartas)
 
 ## 🔸 Objetivo do Jogo
