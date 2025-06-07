@@ -68,9 +68,6 @@ class NetworkManager:
                 if self.running:
                     print(f"⚠️ Erro ao receber mensagem: {e}")
     
-    def _log_message(self, action, message_type, target=None, data=None):
-        """Log padronizado para mensagens enviadas/recebidas"""
-    
     def close(self):
         """Fecha a conexão"""
         self.running = False
