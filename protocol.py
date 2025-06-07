@@ -96,9 +96,6 @@ class Protocol:
         points = data.get("points")
         scores = data.get("scores")
         
-        print(f"\n🏆 Player {winner} ganhou a rodada!")
-        print(f"📊 Pontos da rodada: {points}")
-        
         # Atualiza pontuações
         if scores:
             self.game.update_scores(scores)

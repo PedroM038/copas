@@ -31,21 +31,7 @@ class NetworkManager:
         target_address = self.nodes[target_node]
         self.sock.sendto(message.encode(), target_address)
         
-        # Log da mensagem enviada
-        try:
-            msg_data = json.loads(message)
-            self._log_message("SEND", msg_data.get("type", "UNKNOWN"), target_node, msg_data)
-        except:
-            self._log_message("SEND", "TOKEN", target_node, message)
-    
     def send_to_all(self, message):
-        """Envia mensagem para todos os nós do anel"""
-        try:
-            msg_data = json.loads(message)
-            self._log_message("BROADCAST", msg_data.get("type", "UNKNOWN"), None, msg_data)
-        except:
-            self._log_message("BROADCAST", "UNKNOWN", None, message)
-        
         for i in range(self.total_nodes):
             self.send_message(message, i)
     
