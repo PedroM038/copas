@@ -2,6 +2,7 @@ import json
 import time
 import sys
 from network import NetworkManager
+from gameui import GameUI
 
 class Protocol:
     def __init__(self, network_manager, game_logic):
@@ -13,8 +14,8 @@ class Protocol:
         """Processa mensagens recebidas da rede"""
         # Se for apenas o token, processa diretamente
         if message == "TOKEN":
-            self.game.receive_token()
-            print(f"🎯 Token recebido! É sua vez de jogar.")
+            if self.game.receive_token():  # Só imprime se realmente recebeu
+                GameUI.print_player_turn(self.game.player_index)
             return
         
         # Tenta processar como JSON
@@ -70,7 +71,7 @@ class Protocol:
             else:
                 self.game.token = False
                 print(f"🔄 Player {self.game.player_index} não tem o 2♣, esperando o próximo jogador.")
-
+    
     def process_game_message(self, data):
         """Processa mensagens de jogo (jogadas)"""
         action = data.get("action")
@@ -82,8 +83,15 @@ class Protocol:
             # Adiciona a carta jogada às cartas da rodada atual
             self.game.add_card_to_trick(card, player)
             
-            print(f"🃏 Player {player} jogou: {card}")
-            print(f"📋 Cartas na mesa: {self.game.get_current_trick_cards()}")
+            # Interface mais limpa
+            if player == self.game.player_index:
+                print(f"✅ Você jogou: {card}")
+            else:
+                print(f"🃏 Player {player} jogou: {card}")
+            
+            # Mostra estado atual da mesa
+            cards_on_table = self.game.get_current_trick_cards()
+            print(f"📋 Mesa: {cards_on_table} ({len(cards_on_table)}/4)")
             
             # Se todos os 4 jogadores jogaram, termina a rodada
             if self.game.is_trick_complete():
@@ -91,29 +99,24 @@ class Protocol:
 
     def process_end_trick_message(self, data):
         """Processa mensagem de fim de rodada"""
-
         winner = data.get("winner")
         points = data.get("points")
         scores = data.get("scores")
         
-        # Atualiza pontuações
+        # Atualiza estado
         if scores:
             self.game.update_scores(scores)
-            print(f"📈 Pontuações atuais: {scores}")
         
-        # Limpa as cartas da mesa
         self.game.reset_trick()
         
-        # Verifica se completou uma mão (13 rodadas)
         if self.game.is_hand_complete():
             self.game.check_game_end()
         else:
-            # Passa o token para o jogador vencedor do trick
             if self.game.player_index == winner:
                 self.send_token_to_self()
             else:
                 self.game.token = False
-        
+    
     def process_scores_message(self, data):
         """Processa atualização de pontuações"""
         scores = data.get("scores")
@@ -204,10 +207,13 @@ class Protocol:
 
     def send_token_to_self(self):
         """Envia token para si mesmo"""
-        self.network.send_message("TOKEN", self.game.player_index)
-
+        # Só envia se não tiver o token já
+        if not self.game.token:
+            self.network.send_message("TOKEN", self.game.player_index)
+    
     def pass_token_to_next(self):
         """Passa token para o próximo jogador"""
+        self.game.token = False
         self.network.pass_token(self.network.next_node_index)
 
     # MÉTODOS DE COORDENAÇÃO
@@ -225,7 +231,6 @@ class Protocol:
         self.network.send_to_all(json.dumps(start_message))
         
         self.game.start_game()
-        print(f"🎮 Jogo iniciado! Suas cartas: {self.game.player_hand}")
         
         # O jogador com 2♣ recebe o token
         if self.game.has_two_of_clubs():
@@ -238,26 +243,30 @@ class Protocol:
         """Finaliza uma rodada"""
         winner, points = self.game.calculate_trick_result()
         
-        print(f"\n🏆 Rodada {self.game.current_trick} finalizada!")
-        print(f"📋 Cartas jogadas: {self.game.get_current_trick_cards()}")
-        print(f"🎯 Vencedor: Player {winner}")
-        print(f"💔 Pontos: {points}")
+        # Interface melhorada
+        GameUI.print_trick_result(
+            winner, 
+            self.game.get_current_trick_cards(), 
+            points, 
+            self.game.players_scores.copy()
+        )
         
         self.game.next_trick()
         
-        # Envia mensagem de fim de trick para todos os jogadores
-        self.send_end_trick_message(winner, points, self.game.players_scores.copy())
-
+        # APENAS O VENCEDOR envia a mensagem
+        if self.game.player_index == winner:
+            self.send_end_trick_message(winner, points, self.game.players_scores.copy())
+            print(f"🎯 Você ganhou a rodada! É sua vez de jogar.")
+            self.send_token_to_self()
+            
     def play_card(self, card):
         """Processa jogada de carta do jogador local"""
         if self.game.can_play_card(card):
             will_complete = self.game.will_complete_trick()
             self.game.remove_card_from_hand(card)
             self.send_play_card_message(card)
-            print(f"🃏 Você jogou: {card}")
-            
             self.game.token = False
-            
+
             if not will_complete:
                 # Se ainda não completou a rodada, passa o token para o próximo jogador
                 self.pass_token_to_next()

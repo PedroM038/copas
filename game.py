@@ -106,8 +106,11 @@ class HeartsGame:
         self.players_scores = final_scores.copy()
 
     def receive_token(self):
-        """Recebe o token"""
-        self.token = True
+        """Recebe o token (evita duplicação)"""
+        if not self.token:  # Só aceita se não tiver já
+            self.token = True
+            return True
+        return False
 
     def can_play_card(self, card):
         """Verifica se pode jogar a carta"""
@@ -189,18 +192,28 @@ class HeartsGame:
             return int(value)
 
     def find_card_by_number(self, number, valid_cards):
-        """Encontra carta na mão pelo número digitado"""
-        for card in valid_cards:
-            if self.get_card_number_value(card) == number:
-                return card
+        """Encontra carta na mão pelo número sequencial digitado"""
+        sorted_valid = sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        if 1 <= number <= len(sorted_valid):
+            return sorted_valid[number - 1]
         return None
 
     def display_cards_with_numbers(self, cards):
-        """Exibe cartas com seus números correspondentes"""
+        """Exibe cartas com seus números únicos para seleção"""
         print("\n🃏 Suas cartas:")
-        for card in sorted(cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x))):
-            number = self.get_card_number_value(card)
-            print(f"   {number}: {card}")
+        sorted_cards = sorted(cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        for i, card in enumerate(sorted_cards, 1):
+            print(f"   {i}: {card}")
+    
+    def display_valid_cards(self, valid_cards):
+        """Exibe cartas válidas com numeração sequencial"""
+        print(f"\n✅ Cartas válidas para jogar:")
+        sorted_valid = sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x)))
+        
+        for i, card in enumerate(sorted_valid, 1):
+            print(f"   {i}: {card}")
 
     def is_valid_play(self, card, trick_cards, player_hand):
         # Primeira jogada de todas deve ser 2♣
@@ -250,13 +263,19 @@ class HeartsGame:
         return points
 
     def get_trick_winner(self, trick_cards):
+        """Determina vencedor do trick (maior carta do naipe inicial)"""
+        if not trick_cards:
+            return None
+            
         lead_suit = self.get_card_suit(trick_cards[0]["card"])
+        winner_player = None
         highest_value = -1
-        winner_player = trick_cards[0]["player"]
         
         for card_info in trick_cards:
             card = card_info["card"]
             player = card_info["player"]
+            
+            # Só cartas do naipe inicial podem ganhar
             if self.get_card_suit(card) == lead_suit:
                 value = self.get_card_value(card)
                 if value > highest_value:
@@ -300,7 +319,7 @@ class HeartsGame:
             self.token = False
             print(f"🔄 Player {self.player_index} não tem o 2♣, esperando o próximo jogador.")
 
-    # Loop principal do jogo
+    # Atualizar o loop principal do jogo
     def run(self):
         print(f"🚀 Iniciando Player {self.player_index}")
         self.protocol.initialize_connection()
@@ -315,27 +334,26 @@ class HeartsGame:
                 print(f"\n{'='*50}")
                 print(f"🎯 SUA VEZ! (Player {self.player_index})")
                 
+                # Mostra cartas na mesa se houver
+                if self.current_trick_cards:
+                    print(f"\n🃏 Cartas na mesa: {[card_info['card'] for card_info in self.current_trick_cards]}")
+                
+                # Exibe todas as cartas
                 self.display_cards_with_numbers(self.player_hand)
                 
                 valid_cards = [c for c in self.player_hand if self.is_valid_play(c, self.current_trick_cards, self.player_hand)]
                 
                 if valid_cards:
-                    print(f"\n✅ Cartas válidas para jogar:")
-                    for card in sorted(valid_cards, key=lambda x: (self.get_card_suit(x), self.get_card_value(x))):
-                        number = self.get_card_number_value(card)
-                        print(f"   {number}: {card}")
-                    
-                    if self.current_trick_cards:
-                        print(f"\n🃏 Cartas na mesa: {[card_info['card'] for card_info in self.current_trick_cards]}")
+                    self.display_valid_cards(valid_cards)
                     
                     try:
-                        choice = int(input("\n🎯 Digite o número da carta para jogar: "))
+                        choice = int(input(f"\n🎯 Digite o número da carta (1-{len(valid_cards)}): "))
                         selected_card = self.find_card_by_number(choice, valid_cards)
                         
                         if selected_card:
                             self.protocol.play_card(selected_card)
                         else:
-                            print("❌ Número inválido! Tente novamente.")
+                            print(f"❌ Número inválido! Digite entre 1 e {len(valid_cards)}.")
                     except ValueError:
                         print("❌ Digite apenas números!")
                 else:
