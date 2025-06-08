@@ -1,0 +1,300 @@
+\UseRawInputEncoding
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[portuguese]{babel}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+
+\geometry{margin=2.5cm}
+
+% Configuração para código Python
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{red},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{gray}
+}
+
+\title{
+    \includegraphics[scale=0.8]{logoUFPR.png} \\
+    \vspace*{1cm}
+    {\huge\bfseries Relatório} \\
+    \vspace*{1cm}
+    {\Large Implementação Distribuída do Jogo Copas} \\
+    \vspace*{7cm}
+}
+\author{Pedro Henrique Marques de Lima \\ Felipe Gonçalves Pereira}
+\date{28 de Julho de 2024}
+
+\begin{document}
+
+\maketitle
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introdução}
+
+Este relatório apresenta a implementação de uma versão distribuída do jogo de cartas Hearts, desenvolvida em Python utilizando comunicação UDP. O projeto foi estruturado seguindo princípios de arquitetura modular, separando claramente as responsabilidades entre lógica de jogo, comunicação de rede e protocolo de mensagens.
+
+O Hearts é um jogo de cartas para 4 jogadores onde o objetivo é evitar cartas que conferem pontos (copas e dama de espadas), sendo vencedor aquele que acumular menos pontos ao final do jogo.
+
+\section{Visão Geral da Arquitetura}
+
+A arquitetura do sistema foi projetada com três componentes principais:
+
+\begin{itemize}
+    \item \textbf{Game Logic} (\texttt{game.py}): Responsável pelas regras do Hearts e estado do jogo
+    \item \textbf{Network Manager} (\texttt{network.py}): Gerencia a comunicação UDP entre os nós
+    \item \textbf{Protocol Handler} (\texttt{protocol.py}): Define e processa o protocolo de mensagens
+\end{itemize}
+
+Esta separação permite manutenibilidade, testabilidade e possibilita futuras extensões do sistema.
+
+\section{Lógica de Rede}
+
+\subsection{Escolha do Protocolo UDP}
+
+A implementação utiliza UDP (User Datagram Protocol) como protocolo de transporte, uma decisão fundamentada nas seguintes considerações:
+
+\subsubsection{Vantagens do UDP}
+\begin{itemize}
+    \item \textbf{Baixa latência}: Essencial para jogos em tempo real
+    \item \textbf{Simplicidade}: Reduz overhead de implementação
+    \item \textbf{Broadcast eficiente}: Facilita comunicação um-para-muitos
+    \item \textbf{Controle total}: Permite implementar lógica customizada de confiabilidade
+\end{itemize}
+
+\subsubsection{Desvantagens do UDP}
+\begin{itemize}
+    \item \textbf{Não confiável}: Perda de pacotes pode ocorrer
+    \item \textbf{Sem garantia de ordem}: Mensagens podem chegar fora de sequência
+    \item \textbf{Sem controle de fluxo}: Necessário implementar controle customizado
+\end{itemize}
+
+\subsection{Arquitetura de Rede}
+
+O sistema implementa uma topologia em anel lógico onde cada nó conhece todos os outros:
+
+\begin{lstlisting}[caption=Configuração dos Nós]
+ports = [base_port, base_port + 1, base_port + 2, base_port + 3]
+
+nodes = [(address, port) for address, port in node_configs]
+\end{lstlisting}
+
+\subsection{Gerenciamento de Conexões}
+
+A classe \texttt{NetworkManager} implementa:
+
+\begin{itemize}
+    \item \textbf{Socket UDP} para comunicação bidirecional
+    \item \textbf{Thread dedicada} para recepção de mensagens
+    \item \textbf{Callback system} para processamento assíncrono
+    \item \textbf{Broadcast} para mensagens globais
+\end{itemize}
+
+\begin{lstlisting}[caption=Estrutura do NetworkManager]
+class NetworkManager:
+    def __init__(self, node_index, nodes):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(nodes[node_index])
+        self.receive_thread = threading.Thread(target=self._receive_messages)
+        
+    def send_to_all(self, message):
+        for i in range(self.total_nodes):
+            self.send_message(message, i)
+\end{lstlisting}
+
+\section{Protocolo de Comunicação}
+
+\subsection{Design do Protocolo}
+
+O protocolo foi desenvolvido com base em mensagens JSON estruturadas, oferecendo:
+
+\begin{itemize}
+    \item \textbf{Flexibilidade}: Fácil extensão para novos tipos de mensagem
+    \item \textbf{Legibilidade}: Debugging simplificado
+    \item \textbf{Estruturação}: Campos bem definidos e tipados
+\end{itemize}
+
+\subsection{Tipos de Mensagem}
+
+O protocolo define os seguintes tipos de mensagem:
+
+\subsubsection{Mensagens de Controle}
+\begin{itemize}
+    \item \texttt{CONNECT}: Anúncio de conexão de jogador
+    \item \texttt{START\_GAME}: Distribuição inicial de cartas
+    \item \texttt{TOKEN}: Controle de turno
+\end{itemize}
+
+\subsubsection{Mensagens de Jogo}
+\begin{itemize}
+    \item \texttt{GAME}: Jogadas de cartas
+    \item \texttt{END\_TRICK}: Finalização de rodadas
+    \item \texttt{SCORES}: Atualização de pontuações
+    \item \texttt{NEW\_HAND}: Início de nova mão
+    \item \texttt{GAME\_END}: Finalização do jogo
+\end{itemize}
+
+\subsection{Estrutura das Mensagens}
+
+\begin{lstlisting}[caption=Exemplo de Mensagem de Jogada]
+{
+    "type": "GAME",
+    "action": "PLAY",
+    "card": "A Copas",
+    "player": 1
+}
+\end{lstlisting}
+
+\begin{lstlisting}[caption=Exemplo de Mensagem de Fim de Rodada]
+{
+    "type": "END_TRICK",
+    "winner": 2,
+    "points": 4,
+    "scores": [0, 2, 4, 1],
+    "trick": 5
+}
+\end{lstlisting}
+
+\section{Configuração da Rede}
+
+\subsection{Configuração Dinâmica}
+
+O sistema suporta configuração flexível através de argumentos de linha de comando:
+
+\begin{lstlisting}[caption=Exemplo de Execução]
+python game.py 0 localhost 5000    # Jogador 0 (host)
+python game.py 1 192.168.1.100     # Jogador 1 remoto
+python game.py 2 localhost         # Jogador 2 local
+python game.py 3 localhost         # Jogador 3 local
+\end{lstlisting}
+
+\subsection{Descoberta e Conexão}
+
+O processo de inicialização segue o padrão:
+
+\begin{enumerate}
+    \item \textbf{Host (Player 0)} inicia e aguarda conexões
+    \item \textbf{Clients} se conectam enviando mensagem \texttt{CONNECT}
+    \item \textbf{Host} monitora até 4 jogadores conectados
+    \item \textbf{Jogo inicia} automaticamente quando todos conectados
+\end{enumerate}
+
+\section{Controle de Estado e Sincronização}
+
+\subsection{Algoritmo de Token Ring}
+
+Para garantir ordem nas jogadas, implementamos um algoritmo de token ring:
+
+\begin{itemize}
+    \item \textbf{Token exclusivo}: Apenas quem possui o token pode jogar
+    \item \textbf{Passagem sequencial}: Token passa na ordem dos jogadores
+    \item \textbf{Vencedor de rodada}: Recebe token para próxima rodada
+\end{itemize}
+
+\subsection{Consistência de Estado}
+
+A consistência é mantida através de:
+
+\begin{itemize}
+    \item \textbf{Broadcast de jogadas}: Todas as ações são compartilhadas
+    \item \textbf{Validação local}: Cada nó valida independentemente
+    \item \textbf{Sincronização por eventos}: Estado atualizado por mensagens
+\end{itemize}
+
+\section{Análise de Vantagens e Desvantagens}
+
+\subsection{Vantagens da Implementação}
+
+\subsubsection{Arquitetura}
+\begin{itemize}
+    \item \textbf{Modularidade}: Separação clara de responsabilidades
+    \item \textbf{Extensibilidade}: Fácil adição de novos recursos
+    \item \textbf{Manutenibilidade}: Código organizado e documentado
+\end{itemize}
+
+\subsubsection{Rede}
+\begin{itemize}
+    \item \textbf{Performance}: Baixa latência com UDP
+    \item \textbf{Simplicidade}: Implementação direta sem overhead
+    \item \textbf{Flexibilidade}: Suporte a diferentes topologias de rede
+\end{itemize}
+
+\subsubsection{Protocolo}
+\begin{itemize}
+    \item \textbf{Clareza}: Mensagens JSON legíveis
+    \item \textbf{Debugabilidade}: Fácil análise de tráfico
+    \item \textbf{Extensibilidade}: Novos tipos facilmente adicionados
+\end{itemize}
+
+\subsection{Desvantagens e Limitações}
+
+\subsubsection{Confiabilidade}
+\begin{itemize}
+    \item \textbf{Perda de pacotes}: UDP não garante entrega
+    \item \textbf{Ordem de mensagens}: Possível chegada fora de sequência
+    \item \textbf{Detecção de falhas}: Limitada sem heartbeat
+\end{itemize}
+
+\subsubsection{Escalabilidade}
+\begin{itemize}
+    \item \textbf{Número fixo}: Limitado a 4 jogadores
+    \item \textbf{Broadcast}: Tráfego cresce quadraticamente
+    \item \textbf{Coordenação}: Dependência do host
+\end{itemize}
+
+\subsubsection{Segurança}
+\begin{itemize}
+    \item \textbf{Sem autenticação}: Jogadores não são verificados
+    \item \textbf{Dados não criptografados}: Mensagens em texto claro
+    \item \textbf{Vulnerável a ataques}: Flooding, spoofing
+\end{itemize}
+
+\section{Possíveis Melhorias}
+
+\subsection{Confiabilidade}
+\begin{itemize}
+    \item Implementar ACK/NACK para mensagens críticas
+    \item Sistema de heartbeat para detecção de falhas
+    \item Timeout e retransmissão automática
+\end{itemize}
+
+\subsection{Segurança}
+\begin{itemize}
+    \item Autenticação de jogadores
+    \item Criptografia de mensagens
+    \item Validação de integridade
+\end{itemize}
+
+\subsection{Performance}
+\begin{itemize}
+    \item Compressão de mensagens
+    \item Batching de múltiplas operações
+    \item Otimização do protocolo JSON
+\end{itemize}
+
+\section{Conclusão}
+
+A implementação apresentada demonstra uma arquitetura sólida para jogos distribuídos, aproveitando as vantagens do UDP para comunicação eficiente. A separação modular entre rede, protocolo e lógica de jogo facilita manutenção e extensões futuras.
+
+Embora existam limitações relacionadas à confiabilidade e segurança, típicas de implementações UDP, o sistema atende adequadamente aos requisitos de um jogo Hearts distribuído, proporcionando uma base sólida para desenvolvimentos futuros.
+
+A escolha de UDP, apesar das desvantagens, mostrou-se apropriada para este contexto, onde a baixa latência e simplicidade de implementação superam os desafios de confiabilidade em um ambiente controlado.
+
+\end{document}

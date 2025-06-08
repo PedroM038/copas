@@ -5,16 +5,8 @@ import signal
 from network import NetworkManager
 from protocol import Protocol
 
-# Configuração dos nós
-nodes = [
-    ('localhost', 5000),
-    ('localhost', 5001),
-    ('localhost', 5002),
-    ('localhost', 5003),
-]
-
 class HeartsGame:
-    def __init__(self, node_index):
+    def __init__(self, node_index, nodes):
         self.player_index = node_index
         
         # Configuração de rede
@@ -361,14 +353,66 @@ class HeartsGame:
             
             time.sleep(0.1)
 
+def parse_arguments():
+    """Analisa argumentos da linha de comando"""
+    if len(sys.argv) < 3:
+        print("❌ Uso: python game.py <id_jogador> <endereco> [porta_base]")
+        print("📝 Exemplos:")
+        print("   python game.py 0 localhost")
+        print("   python game.py 1 192.168.1.100")
+        print("   python game.py 2 localhost 6000")
+        sys.exit(1)
+    
+    try:
+        player_id = int(sys.argv[1])
+        address = sys.argv[2]
+        base_port = int(sys.argv[3]) if len(sys.argv) > 3 else 5000
+        
+        if not (0 <= player_id <= 3):
+            print("❌ ID do jogador deve ser entre 0 e 3")
+            sys.exit(1)
+            
+        return player_id, address, base_port
+        
+    except ValueError:
+        print("❌ ID do jogador e porta devem ser números")
+        sys.exit(1)
+
+def create_nodes_config(player_id, player_address, base_port):
+    """Cria configuração dos nós baseada nos argumentos"""
+    # Configuração padrão das portas para cada jogador
+    ports = [base_port, base_port + 1, base_port + 2, base_port + 3]
+    
+    # Cria lista de nós
+    nodes = []
+    for i in range(4):
+        if i == player_id:
+            # Usa o endereço fornecido para este jogador
+            nodes.append((player_address, ports[i]))
+        else:
+            # Para outros jogadores, assume localhost (pode ser modificado depois)
+            nodes.append(('localhost', ports[i]))
+    
+    return nodes
+
 def signal_handler(sig, frame):
     print("\n🛑 Encerrando...")
     game.network.close()
     sys.exit(0)
 
 if __name__ == "__main__":
-    current_node_index = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    game = HeartsGame(current_node_index)
+    # Analisa argumentos da linha de comando
+    player_id, player_address, base_port = parse_arguments()
+    
+    # Cria configuração dos nós
+    nodes = create_nodes_config(player_id, player_address, base_port)
+    
+    print(f"🚀 Configuração do jogo:")
+    print(f"   🎮 Jogador: {player_id}")
+    print(f"   🌐 Endereço: {player_address}:{base_port + player_id}")
+    
+    # Cria e executa o jogo
+    game = HeartsGame(player_id, nodes)
     
     signal.signal(signal.SIGINT, signal_handler)
     game.run()
