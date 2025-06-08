@@ -237,7 +237,6 @@ class Protocol:
             self.send_token_to_self()
         else:
             self.game.token = False
-            print(f"🔄 Player {self.game.player_index} não tem o 2♣, esperando o próximo jogador.")
 
     def end_trick(self):
         """Finaliza uma rodada"""
