@@ -17,11 +17,11 @@ Implementar o jogo copas em uma rede em anel com 4 máquinas
 
 2. Para executar em localHost, abra 4 terminais diferentes e execute:
    ```bash
-   python main.py <player_id>
+   python main.py <player_id> localhost [porta]
    ```
    Onde `<player_id>` pode ser 0, 1, 2 ou 3, representando cada jogador.
 
-3. Para executar em rede, substitua `localhost` pelo IP da máquina onde o servidor está rodando no arquivo game.py.
+3. Para executar em rede, substitua `localhost` pelo IP da máquina onde o servidor está rodando.
 
 # 🎯 Regras do Jogo Copas (Sem Passar Cartas)
 
